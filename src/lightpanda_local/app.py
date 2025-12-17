@@ -21,7 +21,13 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def fetch_title(url: str, cdp_endpoint: str, timeout_ms: int = 60_000) -> str:
+def fetch_title(
+    url: str,
+    cdp_endpoint: str,
+    *,
+    wait_full_render: bool = False,
+    timeout_ms: int = 60_000,
+) -> str:
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(cdp_endpoint)
         owns_context = True
@@ -35,7 +41,22 @@ def fetch_title(url: str, cdp_endpoint: str, timeout_ms: int = 60_000) -> str:
                 context = browser.new_context()
 
         page = context.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        wait_until = "load" if wait_full_render else "domcontentloaded"
+        page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+
+        if wait_full_render:
+            try:
+                page.wait_for_load_state("networkidle", timeout=min(10_000, timeout_ms))
+            except PlaywrightTimeoutError:
+                pass
+            try:
+                page.wait_for_function(
+                    "typeof document !== 'undefined' && !!document.title && document.title.length > 0",
+                    timeout=min(5_000, timeout_ms),
+                )
+            except PlaywrightTimeoutError:
+                pass
+
         title = page.title()
         page.close()
         if owns_context:
@@ -54,6 +75,13 @@ def main() -> None:
         st.subheader("Connection")
         cdp_endpoint = st.text_input("CDP endpoint", value=default_cdp)
         autostart = st.toggle("Autostart Lightpanda (Linux)", value=True)
+        st.divider()
+        st.subheader("Navigation")
+        wait_full_render = st.toggle(
+            "Wait for full render (JS)",
+            value=False,
+            help="If enabled: waits longer (load/network idle) and waits for document.title to be non-empty.",
+        )
 
     url_input = st.text_input("Website URL", placeholder="https://example.com")
     go = st.button("Go", type="primary")
@@ -63,7 +91,7 @@ def main() -> None:
 
     url = normalize_url(url_input)
     if not url:
-        st.error("Masukkan URL dulu.")
+        st.error("Please enter a URL first.")
         st.stop()
 
     try:
@@ -79,14 +107,19 @@ def main() -> None:
                 if process is not None:
                     st.session_state["lightpanda_process"] = process
             except Exception as e:
-                st.error(f"Gagal start Lightpanda: {e}")
+                st.error(f"Failed to start Lightpanda: {e}")
                 st.stop()
 
     with st.spinner("Scraping..."):
         try:
-            title = fetch_title(url, cdp_endpoint)
+            title = fetch_title(
+                url,
+                cdp_endpoint,
+                wait_full_render=wait_full_render,
+                timeout_ms=60_000,
+            )
         except PlaywrightTimeoutError:
-            st.error("Timeout saat membuka halaman.")
+            st.error("Timeout while loading the page.")
             st.stop()
         except PlaywrightError as e:
             st.error(f"Playwright error: {e}")
@@ -95,7 +128,12 @@ def main() -> None:
             st.error(f"Unexpected error: {e}")
             st.stop()
 
-    st.success("Selesai.")
+    if not title:
+        st.warning(
+            "The page title is empty. Try enabling 'Wait for full render (JS)' in the sidebar."
+        )
+    else:
+        st.success("Done.")
     st.write({"url": url, "title": title})
 
 
