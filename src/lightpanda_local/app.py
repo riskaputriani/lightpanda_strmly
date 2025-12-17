@@ -26,8 +26,10 @@ def fetch_title(
     cdp_endpoint: str,
     *,
     wait_full_render: bool = False,
+    capture_screenshot: bool = False,
+    full_page_screenshot: bool = False,
     timeout_ms: int = 60_000,
-) -> str:
+) -> tuple[str, bytes | None]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(cdp_endpoint)
         owns_context = True
@@ -58,11 +60,14 @@ def fetch_title(
                 pass
 
         title = page.title()
+        screenshot_bytes: bytes | None = None
+        if capture_screenshot:
+            screenshot_bytes = page.screenshot(type="png", full_page=full_page_screenshot)
         page.close()
         if owns_context:
             context.close()
         browser.close()
-        return title
+        return title, screenshot_bytes
 
 
 def main() -> None:
@@ -81,6 +86,19 @@ def main() -> None:
             "Wait for full render (JS)",
             value=False,
             help="If enabled: waits longer (load/network idle) and waits for document.title to be non-empty.",
+        )
+        st.divider()
+        st.subheader("Output")
+        show_screenshot = st.toggle(
+            "Show screenshot",
+            value=False,
+            help="Captures a screenshot in-memory and shows it in the app (not saved on the server).",
+        )
+        full_page_screenshot = st.toggle(
+            "Full page screenshot",
+            value=False,
+            disabled=not show_screenshot,
+            help="If enabled, captures the full scrollable page (may be slower/larger).",
         )
 
     url_input = st.text_input("Website URL", placeholder="https://example.com")
@@ -112,10 +130,12 @@ def main() -> None:
 
     with st.spinner("Scraping..."):
         try:
-            title = fetch_title(
+            title, screenshot_bytes = fetch_title(
                 url,
                 cdp_endpoint,
                 wait_full_render=wait_full_render,
+                capture_screenshot=show_screenshot,
+                full_page_screenshot=full_page_screenshot,
                 timeout_ms=60_000,
             )
         except PlaywrightTimeoutError:
@@ -135,6 +155,9 @@ def main() -> None:
     else:
         st.success("Done.")
     st.write({"url": url, "title": title})
+    if screenshot_bytes is not None:
+        with st.expander("Screenshot", expanded=True):
+            st.image(screenshot_bytes)
 
 
 if __name__ == "__main__":
