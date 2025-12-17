@@ -1,7 +1,14 @@
 [project]
-name = "lightpanda-local"
+name = "chrome-cf-solver"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["playwright>=1.40", "streamlit>=1.30"]
+dependencies = [
+    "playwright>=1.40",
+    "streamlit>=1.30",
+    "latest_user_agents==0.0.5",
+    "selenium_authenticated_proxy==1.1.2",
+    "user_agents==2.2.0",
+    "zendriver==0.15.2"
+    ]
