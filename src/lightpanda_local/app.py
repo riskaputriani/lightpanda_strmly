@@ -30,7 +30,7 @@ def fetch_title(
     capture_screenshot: bool = False,
     full_page_screenshot: bool = False,
     timeout_ms: int = 60_000,
-) -> tuple[str, bytes | None, str | None]:
+) -> tuple[str, bytes | None, str | None, str]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(cdp_endpoint)
         owns_context = True
@@ -69,33 +69,44 @@ def fetch_title(
                     type="png", full_page=full_page_screenshot, timeout=timeout_ms
                 )
             except PlaywrightError as e:
-                screenshot_warning = (
-                    f"Playwright screenshot failed on this CDP server ({e}). "
-                    "Trying a CDP fallback..."
-                )
-                try:
-                    session = page.context.new_cdp_session(page)
-                    try:
-                        session.send("Page.enable")
-                    except Exception:
-                        pass
-                    if full_page_screenshot:
-                        screenshot_warning = (
-                            (screenshot_warning or "")
-                            + " Full-page mode is not available in fallback; capturing viewport only."
-                        ).strip()
-                    result = session.send("Page.captureScreenshot", {"format": "png"})
-                    screenshot_bytes = base64.b64decode(result["data"])
-                except Exception as fallback_error:
-                    screenshot_bytes = None
+                error_text = str(e)
+                if "Screenshot is not supported by this CDP server" in error_text:
                     screenshot_warning = (
-                        f"Screenshot is not supported by this CDP server. ({fallback_error})"
+                        "Screenshot tidak didukung oleh CDP server ini. "
+                        "Jika kamu memakai Lightpanda: saat ini API screenshot belum tersedia. "
+                        "Workaround: gunakan Chrome/Chromium dengan `--remote-debugging-port=9222`, "
+                        "atau jalankan browser lewat Playwright (`chromium.launch`) alih-alih CDP."
                     )
+                else:
+                    screenshot_warning = (
+                        f"Playwright screenshot gagal pada CDP server ini ({e}). "
+                        "Mencoba fallback via CDP..."
+                    )
+                    try:
+                        session = page.context.new_cdp_session(page)
+                        try:
+                            session.send("Page.enable")
+                        except Exception:
+                            pass
+                        if full_page_screenshot:
+                            screenshot_warning = (
+                                (screenshot_warning or "")
+                                + " Mode full-page tidak tersedia di fallback; mengambil viewport saja."
+                            ).strip()
+                        result = session.send("Page.captureScreenshot", {"format": "png"})
+                        screenshot_bytes = base64.b64decode(result["data"])
+                    except Exception as fallback_error:
+                        screenshot_bytes = None
+                        screenshot_warning = (
+                            "Screenshot tidak tersedia pada CDP server ini. "
+                            f"({fallback_error})"
+                        )
+        html_content = page.content()
         page.close()
         if owns_context:
             context.close()
         browser.close()
-        return title, screenshot_bytes, screenshot_warning
+        return title, screenshot_bytes, screenshot_warning, html_content
 
 
 def main() -> None:
@@ -128,6 +139,7 @@ def main() -> None:
             disabled=not show_screenshot,
             help="If enabled, captures the full scrollable page (may be slower/larger).",
         )
+        show_html = st.toggle("Show rendered HTML", value=False)
 
     url_input = st.text_input("Website URL", placeholder="https://example.com")
     go = st.button("Go", type="primary")
@@ -158,7 +170,7 @@ def main() -> None:
 
     with st.spinner("Scraping..."):
         try:
-            title, screenshot_bytes, screenshot_warning = fetch_title(
+            title, screenshot_bytes, screenshot_warning, html_content = fetch_title(
                 url,
                 cdp_endpoint,
                 wait_full_render=wait_full_render,
@@ -191,6 +203,10 @@ def main() -> None:
             screenshot_warning
             or "Screenshot could not be captured on this CDP server (no data returned)."
         )
+    
+    if show_html:
+        with st.expander("Rendered HTML"):
+            st.code(html_content, language="html")
 
 
 if __name__ == "__main__":

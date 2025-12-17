@@ -1,39 +1,41 @@
 ## Lightpanda + Playwright (CDP) + Streamlit
 
-App ini:
-- Menjalankan Lightpanda CDP server di `localhost:9222` (autostart di Linux, termasuk Streamlit Cloud).
-- Menggunakan Playwright untuk connect via CDP: `playwright.chromium.connect_over_cdp("ws://127.0.0.1:9222")`
-- Input URL + tombol **Go** untuk ambil **title** halaman.
+This app:
+- Runs a Lightpanda CDP server on `localhost:9222` (auto-start on Linux, including Streamlit Community Cloud).
+- Connects to a CDP endpoint via Playwright: `playwright.chromium.connect_over_cdp("ws://127.0.0.1:9222")`
+- Lets you input a URL and click **Go** to fetch the page **title**.
 
-Catatan: kalau endpoint `ws://...` tidak diterima oleh server CDP, coba ganti jadi `http://127.0.0.1:9222` lewat sidebar.
+Note: if the CDP server does not accept a `ws://...` endpoint, switch to `http://127.0.0.1:9222` in the sidebar.
 
-Struktur project:
-- Source code ada di `src/lightpanda_local/`
-- `streamlit_app.py` dan `init_lightpanda.py` di root adalah shim/launcher supaya gampang dijalankan di lokal dan Streamlit Cloud
+Screenshot note: taking a screenshot requires the CDP command `Page.captureScreenshot`. Some CDP servers (including Lightpanda at the moment) do not implement it, so **Show screenshot** may fail. If you need screenshots, use Chrome/Chromium started with `--remote-debugging-port=9222` and point the app to that endpoint.
 
-### Jalankan lokal
+Project structure:
+- Source code lives in `src/lightpanda_local/`
+- `streamlit_app.py` and `init_lightpanda.py` in the repo root are small shims/launchers to make local runs and Streamlit Cloud deployments easier
+
+### Run locally
 
 1) Install dependencies:
 
 `pip install -r requirements.txt`
 
-2) (Opsional) Start Lightpanda manual:
+2) (Optional) Start Lightpanda manually:
 
 `python init_lightpanda.py --host 127.0.0.1 --port 9222 --wait`
 
-3) Jalankan Streamlit:
+3) Run Streamlit:
 
 `streamlit run streamlit_app.py`
 
-### Deploy ke Streamlit Community Cloud
+### Deploy to Streamlit Community Cloud
 
-File penting:
-- `streamlit_app.py` (entrypoint default di Streamlit Cloud)
+Important files:
+- `streamlit_app.py` (default entrypoint on Streamlit Cloud)
 - `requirements.txt`
 - `runtime.txt`
 
-Lightpanda akan di-download otomatis saat tombol **Go** ditekan (Linux only) dan dijalankan dengan:
+Lightpanda is auto-downloaded when you click **Go** (Linux only) and started as:
 
 `lightpanda serve --host 127.0.0.1 --port 9222`
 
-Kalau kamu sudah menjalankan Lightpanda sendiri, matikan toggle **Autostart Lightpanda (Linux)** di sidebar atau set env `LIGHTPANDA_CDP_WS`.
+If you already run Lightpanda yourself, disable **Autostart Lightpanda (Linux)** in the sidebar or set `LIGHTPANDA_CDP_WS`.
