@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 from urllib.parse import urlparse
 
@@ -29,7 +30,7 @@ def fetch_title(
     capture_screenshot: bool = False,
     full_page_screenshot: bool = False,
     timeout_ms: int = 60_000,
-) -> tuple[str, bytes | None]:
+) -> tuple[str, bytes | None, str | None]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(cdp_endpoint)
         owns_context = True
@@ -61,13 +62,40 @@ def fetch_title(
 
         title = page.title()
         screenshot_bytes: bytes | None = None
+        screenshot_warning: str | None = None
         if capture_screenshot:
-            screenshot_bytes = page.screenshot(type="png", full_page=full_page_screenshot)
+            try:
+                screenshot_bytes = page.screenshot(
+                    type="png", full_page=full_page_screenshot, timeout=timeout_ms
+                )
+            except PlaywrightError as e:
+                screenshot_warning = (
+                    f"Playwright screenshot failed on this CDP server ({e}). "
+                    "Trying a CDP fallback..."
+                )
+                try:
+                    session = page.context.new_cdp_session(page)
+                    try:
+                        session.send("Page.enable")
+                    except Exception:
+                        pass
+                    if full_page_screenshot:
+                        screenshot_warning = (
+                            (screenshot_warning or "")
+                            + " Full-page mode is not available in fallback; capturing viewport only."
+                        ).strip()
+                    result = session.send("Page.captureScreenshot", {"format": "png"})
+                    screenshot_bytes = base64.b64decode(result["data"])
+                except Exception as fallback_error:
+                    screenshot_bytes = None
+                    screenshot_warning = (
+                        f"Screenshot is not supported by this CDP server. ({fallback_error})"
+                    )
         page.close()
         if owns_context:
             context.close()
         browser.close()
-        return title, screenshot_bytes
+        return title, screenshot_bytes, screenshot_warning
 
 
 def main() -> None:
@@ -130,7 +158,7 @@ def main() -> None:
 
     with st.spinner("Scraping..."):
         try:
-            title, screenshot_bytes = fetch_title(
+            title, screenshot_bytes, screenshot_warning = fetch_title(
                 url,
                 cdp_endpoint,
                 wait_full_render=wait_full_render,
@@ -158,6 +186,11 @@ def main() -> None:
     if screenshot_bytes is not None:
         with st.expander("Screenshot", expanded=True):
             st.image(screenshot_bytes)
+    elif show_screenshot:
+        st.warning(
+            screenshot_warning
+            or "Screenshot could not be captured on this CDP server (no data returned)."
+        )
 
 
 if __name__ == "__main__":
