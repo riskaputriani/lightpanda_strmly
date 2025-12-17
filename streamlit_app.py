@@ -16,11 +16,12 @@ def get_chrome_executable_path() -> str:
     """
     return shutil.which("google-chrome") or shutil.which("chrome")
 
-async def get_clearance_cookie(url: str):
+async def process_url(url: str, get_title: bool, get_screenshot: bool, get_html: bool, download_file: bool):
     """
-    Get the Cloudflare clearance cookie and user agent for a given URL.
+    Process a URL to get title, screenshot, HTML, and/or download a file.
     """
     user_agent = get_chrome_user_agent()
+    results = {}
     async with CloudflareSolver(
         cdp_url=None,
         user_agent=user_agent,
@@ -37,11 +38,31 @@ async def get_clearance_cookie(url: str):
             all_cookies = await solver.get_cookies()
             clearance_cookie = solver.extract_clearance_cookie(all_cookies)
         
-        user_agent = await solver.get_user_agent()
-        cookie_string = "; ".join(
-            f'{cookie["name"]}={cookie["value"]}' for cookie in all_cookies
-        )
-        return clearance_cookie, user_agent, cookie_string
+        results["clearance_cookie"] = clearance_cookie
+        
+        if get_title:
+            results["title"] = await solver.driver.main_tab.get_title()
+
+        if get_screenshot:
+            screenshot_path = Path("screenshot.png")
+            await solver.driver.main_tab.save_screenshot(str(screenshot_path))
+            results["screenshot_path"] = screenshot_path
+
+        if get_html:
+            html_path = Path("response.html")
+            html_content = await solver.driver.main_tab.get_content()
+            html_path.write_text(html_content, encoding="utf-8")
+            results["html_path"] = html_path
+            
+        if download_file:
+            user_agent = await solver.get_user_agent()
+            cookie_string = "; ".join(
+                f'{cookie["name"]}={cookie["value"]}' for cookie in all_cookies
+            )
+            results["user_agent"] = user_agent
+            results["cookie_string"] = cookie_string
+
+    return results
 
 st.title("Chrome Downloader")
 
@@ -52,7 +73,8 @@ if mode == "Get Clearance Cookie":
     if st.button("Get Clearance Cookie"):
         if url:
             with st.spinner("Solving Cloudflare challenge..."):
-                cookie, _, _ = asyncio.run(get_clearance_cookie(url))
+                results = asyncio.run(process_url(url, False, False, False, False))
+                cookie = results.get("clearance_cookie")
                 if cookie:
                     st.success("Successfully retrieved Cloudflare clearance cookie!")
                     st.json(cookie)
@@ -62,29 +84,54 @@ if mode == "Get Clearance Cookie":
             st.warning("Please enter a URL.")
 else: # Download File
     url = st.text_input("Enter the URL of the file to download:")
-    if st.button("Download"):
+    
+    get_title = st.checkbox("Get Title")
+    get_screenshot = st.checkbox("Take Screenshot")
+    get_html = st.checkbox("Get HTML")
+
+    if st.button("Process URL"):
         if url:
-            with st.spinner("Solving Cloudflare challenge and downloading file..."):
-                cookie, user_agent, cookie_string = asyncio.run(get_clearance_cookie(url))
+            with st.spinner("Processing URL..."):
+                results = asyncio.run(process_url(url, get_title, get_screenshot, get_html, True))
+                
+                if get_title:
+                    st.subheader("Page Title")
+                    st.write(results.get("title"))
+                
+                if get_screenshot:
+                    st.subheader("Screenshot")
+                    screenshot_path = results.get("screenshot_path")
+                    if screenshot_path and screenshot_path.exists():
+                        st.image(str(screenshot_path))
+                        with open(screenshot_path, "rb") as f:
+                            st.download_button("Download Screenshot", f, "screenshot.png")
+
+                if get_html:
+                    st.subheader("HTML Content")
+                    html_path = results.get("html_path")
+                    if html_path and html_path.exists():
+                        with open(html_path, "rb") as f:
+                            st.download_button("Download HTML", f, "response.html")
+
+                # Download the file using wget
+                cookie = results.get("clearance_cookie")
                 if cookie:
-                    st.success("Successfully retrieved Cloudflare clearance cookie!")
-                    
+                    st.subheader("File Download")
                     # Create a downloads directory if it doesn't exist
                     downloads_dir = Path("downloads")
                     downloads_dir.mkdir(exist_ok=True)
                     
                     # Get the filename from the URL
-                    filename = url.split("/")[-1]
+                    filename = url.split("/")[-1] or "downloaded_file"
                     filepath = downloads_dir / filename
 
-                    # Download the file using wget
                     try:
                         wget_command = [
                             "wget",
                             "--header",
-                            f"Cookie: {cookie_string}",
+                            f'Cookie: {results.get("cookie_string")}',
                             "--header",
-                            f"User-Agent: {user_agent}",
+                            f'User-Agent: {results.get("user_agent")}',
                             "-O",
                             str(filepath),
                             url,
@@ -101,6 +148,6 @@ else: # Download File
                     except subprocess.CalledProcessError as e:
                         st.error(f"Failed to download file with wget. Error: {e.stderr.decode()}")
                 else:
-                    st.error("Failed to retrieve Cloudflare clearance cookie.")
+                    st.error("Failed to retrieve Cloudflare clearance cookie for download.")
         else:
             st.warning("Please enter a URL.")
