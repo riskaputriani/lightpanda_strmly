@@ -213,6 +213,24 @@ def fetch_page(
     timeout: int = 30_000,
 ) -> dict:
     """Use Playwright to launch a browser, get page data, and detect CF challenges."""
+    chrome_path = get_chrome_path()
+    context_options = {}
+    if proxy:
+        proxy_parts = urlparse(proxy)
+        server = f"{proxy_parts.scheme}://{proxy_parts.hostname}"
+        if proxy_parts.port:
+            server += f":{proxy_parts.port}"
+        
+        proxy_config = {"server": server}
+        if proxy_parts.username:
+            proxy_config["username"] = proxy_parts.username
+        if proxy_parts.password:
+            proxy_config["password"] = proxy_parts.password
+        context_options["proxy"] = proxy_config
+    
+    if user_agent:
+        context_options["user_agent"] = user_agent
+
     with sync_playwright() as playwright:
         with playwright.chromium.launch(
             executable_path=chrome_path,
