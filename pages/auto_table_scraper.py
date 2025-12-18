@@ -56,68 +56,86 @@ def _exists(selector_type: str, selector: str, soup: BeautifulSoup, tree) -> boo
         return False
 
 
-def _extract_value(selector_type: str, selector: str, soup: BeautifulSoup, tree) -> str:
+def _extract_value_with_mode(
+    selector_type: str,
+    selector: str,
+    mode: str,
+    attr_name: str,
+    soup: BeautifulSoup,
+    tree,
+) -> str:
+    """Ambil nilai teks atau atribut."""
     try:
         if selector_type == "xpath":
             nodes = tree.xpath(selector)
             if not nodes:
                 return ""
             node = nodes[0]
+            if mode == "attr" and attr_name:
+                if hasattr(node, "get"):
+                    return str(node.get(attr_name, "")).strip()
+                return ""
             if isinstance(node, str):
                 return node.strip()
             if hasattr(node, "text_content"):
                 return node.text_content().strip()
             return str(node).strip()
-        else:  # css or js
+        else:  # css or js treated the same
             el = soup.select_one(selector)
             if not el:
                 return ""
+            if mode == "attr" and attr_name:
+                return (el.get(attr_name) or "").strip()
             return el.get_text(" ", strip=True)
     except Exception:
         return ""
 
 
-def extract_with_mappings(html: str, mappings: List[Dict[str, str]]) -> Optional[pd.DataFrame]:
-    """Extract rows berdasarkan daftar mapping kolom + selector (dengan opsi repeat)."""
+def extract_with_mappings(
+    html: str,
+    mappings: List[Dict[str, str]],
+    repeat_selector: Optional[str] = None,
+    repeat_type: str = "css",
+) -> Optional[pd.DataFrame]:
+    """Extract rows berdasarkan daftar mapping kolom + selector (dengan opsi repeat global)."""
     soup = BeautifulSoup(html, "html.parser")
     tree = lxml_html.fromstring(html)
 
     if not mappings:
         return None
 
-    any_repeat = any(m.get("repeat_selector") for m in mappings)
     rows: List[Dict[str, str]] = []
 
-    if not any_repeat:
+    if not repeat_selector:
         row = {}
         for m in mappings:
-            row[m["name"]] = _extract_value(m["selector_type"], m["selector"], soup, tree)
+            row[m["name"]] = _extract_value_with_mode(
+                m.get("selector_type", "css"),
+                m.get("selector", ""),
+                m.get("value_mode", "text"),
+                m.get("attr_name", ""),
+                soup,
+                tree,
+            )
         rows.append(row)
     else:
         idx = 1
         while True:
-            row: Dict[str, str] = {}
-            repeat_hit = False
-
-            for m in mappings:
-                base_selector = m.get("selector", "")
-                selector_type = m.get("selector_type", "css")
-                repeat_selector = m.get("repeat_selector") or ""
-
-                selector_idx = _apply_index(base_selector, idx) if repeat_selector else base_selector
-                repeat_idx = _apply_index(repeat_selector, idx) if repeat_selector else ""
-
-                if repeat_selector:
-                    if not _exists(selector_type, repeat_idx, soup, tree):
-                        row[m["name"]] = ""
-                        continue
-                    repeat_hit = True
-
-                row[m["name"]] = _extract_value(selector_type, selector_idx, soup, tree)
-
-            if not repeat_hit:
+            repeat_idx = _apply_index(repeat_selector, idx)
+            if not _exists(repeat_type, repeat_idx, soup, tree):
                 break
 
+            row: Dict[str, str] = {}
+            for m in mappings:
+                selector_idx = _apply_index(m.get("selector", ""), idx)
+                row[m["name"]] = _extract_value_with_mode(
+                    m.get("selector_type", "css"),
+                    selector_idx,
+                    m.get("value_mode", "text"),
+                    m.get("attr_name", ""),
+                    soup,
+                    tree,
+                )
             rows.append(row)
             idx += 1
 
@@ -165,14 +183,34 @@ if "column_mappings" not in st.session_state:
             "name": "Products",
             "selector_type": "css",
             "selector": "body > div.main > div > div.products-wrap > div.products > div:nth-child(1) > div.col-8.description > h3 > a",
-            "repeat_selector": "body > div.main > div > div.products-wrap > div.products > div:nth-child(1)",
+            "value_mode": "text",
+            "attr_name": "",
         }
     ]
+
+if "repeat_selector_shared" not in st.session_state:
+    st.session_state.repeat_selector_shared = "body > div.main > div > div.products-wrap > div.products > div:nth-child(1)"
+if "repeat_type_shared" not in st.session_state:
+    st.session_state.repeat_type_shared = "css"
+
+repeat_cols = st.columns(2)
+repeat_selector_shared = repeat_cols[0].text_input(
+    "Selector repeat (opsional, satu untuk semua kolom)",
+    value=st.session_state.repeat_selector_shared,
+    help="Jika diisi, akan diulang dengan nth-child / {i} naik 1,2,3... sampai tidak ada hasil.",
+)
+repeat_type_shared = repeat_cols[1].selectbox(
+    "Tipe selector repeat",
+    options=["css", "xpath", "js"],
+    index=["css", "xpath", "js"].index(st.session_state.repeat_type_shared),
+)
+st.session_state.repeat_selector_shared = repeat_selector_shared.strip()
+st.session_state.repeat_type_shared = repeat_type_shared
 
 new_mappings: List[Dict[str, str]] = []
 for idx, mapping in enumerate(st.session_state.column_mappings):
     st.markdown(f"**Kolom {idx+1}**")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     name = col1.text_input("Nama kolom", value=mapping.get("name", f"col_{idx+1}"), key=f"name_{idx}")
     selector_type = col2.selectbox(
         "Tipe selector",
@@ -180,24 +218,32 @@ for idx, mapping in enumerate(st.session_state.column_mappings):
         index=["css", "xpath", "js"].index(mapping.get("selector_type", "css")),
         key=f"type_{idx}",
     )
-    selector = st.text_input(
+    selector = col3.text_input(
         "Selector untuk nilai",
         value=mapping.get("selector", ""),
         key=f"selector_{idx}",
-        help="Bisa pakai nth-child(1) atau {i} sebagai placeholder untuk index.",
+        help="Gunakan nth-child(1) atau {i} untuk indeks berulang.",
     )
-    repeat_selector = st.text_input(
-        "Selector repeat (opsional)",
-        value=mapping.get("repeat_selector", ""),
-        key=f"repeat_{idx}",
-        help="Jika diisi, akan diulang dengan nth-child / {i} naik 1,2,3... sampai tidak ada hasil.",
+    val_col, attr_col = st.columns(2)
+    value_mode = val_col.selectbox(
+        "Ambil apa?",
+        options=["text", "attr"],
+        index=["text", "attr"].index(mapping.get("value_mode", "text")),
+        key=f"value_mode_{idx}",
+    )
+    attr_name = attr_col.text_input(
+        "Nama atribut (jika pilih attr)",
+        value=mapping.get("attr_name", ""),
+        key=f"attr_name_{idx}",
+        help="Contoh: src, href, alt, data-id",
     )
     new_mappings.append(
         {
             "name": name.strip() or f"col_{idx+1}",
             "selector_type": selector_type,
             "selector": selector.strip(),
-            "repeat_selector": repeat_selector.strip(),
+            "value_mode": value_mode,
+            "attr_name": attr_name.strip(),
         }
     )
     st.divider()
@@ -208,7 +254,8 @@ if st.button("Tambah kolom"):
             "name": f"col_{len(st.session_state.column_mappings)+1}",
             "selector_type": "css",
             "selector": "",
-            "repeat_selector": "",
+            "value_mode": "text",
+            "attr_name": "",
         }
     )
     st.rerun()
@@ -295,19 +342,41 @@ if st.button("Extract Table"):
         st.error("HTML tidak tersedia dari hasil fetch. Aktifkan Get HTML.")
         st.stop()
 
-    df = extract_with_mappings(html_content, st.session_state.column_mappings)
+    df = extract_with_mappings(
+        html_content,
+        st.session_state.column_mappings,
+        st.session_state.repeat_selector_shared or None,
+        st.session_state.repeat_type_shared,
+    )
     if df is None or df.empty:
         st.error("Tidak menemukan data dengan mapping/selector yang diberikan. Periksa selector atau repeat.")
         st.stop()
 
-    st.success(f"Berhasil mengekstrak {len(df)} baris.")
-    st.dataframe(df, width="stretch")
+    # Persist extracted data so reruns (e.g., after download) still show the table
+    st.session_state.extracted_records = df.to_dict(orient="records")
+    st.session_state.extracted_columns = list(df.columns)
+    st.session_state.extracted_row_count = len(df)
 
-    # Downloads
-    json_bytes = df.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    # Optional info
+    st.info(
+        "Gunakan placeholder nth-child(1) atau {i} untuk selector yang berulang. "
+        "Selector repeat (satu untuk semua kolom) menentukan elemen list yang akan diiterasi hingga habis. "
+        "Setiap kolom bisa memilih ambil teks atau atribut tertentu."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Display & Downloads (persisted)                                            #
+# --------------------------------------------------------------------------- #
+if st.session_state.get("extracted_records"):
+    df_display = pd.DataFrame(st.session_state.extracted_records, columns=st.session_state.extracted_columns)
+    st.success(f"Data tersedia: {st.session_state.get('extracted_row_count', len(df_display))} baris.")
+    st.dataframe(df_display, width="stretch")
+
+    json_bytes = df_display.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
+    csv_bytes = df_display.to_csv(index=False).encode("utf-8")
     excel_buffer = BytesIO()
-    df.to_excel(excel_buffer, index=False)
+    df_display.to_excel(excel_buffer, index=False)
     excel_buffer.seek(0)
 
     col_json, col_csv, col_xlsx = st.columns(3)
@@ -318,10 +387,4 @@ if st.button("Extract Table"):
         data=excel_buffer,
         file_name="data.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-    # Optional info
-    st.info(
-        "Gunakan placeholder nth-child(1) atau {i} untuk selector yang berulang. "
-        "Selector repeat menentukan elemen list yang akan diiterasi hingga habis."
     )
