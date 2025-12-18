@@ -13,7 +13,7 @@ from components.url_utils import ensure_scheme
 
 try:
     import pandas as pd
-    from bs4 import BeautifulSoup
+    from bs4 import BeautifulSoup, Tag
 except Exception as exc:  # pragma: no cover - import guard
     st.error(f"Dependency error: {exc}. Pastikan beautifulsoup4 dan pandas terinstall.")
     raise
@@ -68,16 +68,66 @@ def _signature(element) -> Tuple[str, Tuple[str, ...]]:
     return element.name, classes
 
 
+def _extract_lists(
+    soup: BeautifulSoup,
+) -> Optional[Tuple[List[str], List[List[str]]]]:
+    """
+    Cari <ul>/<ol> dengan banyak <li>. Ambil teks tiap li (tanpa HTML).
+    """
+    best_rows: List[List[str]] = []
+    best_fields = 0
+    for lst in soup.find_all(["ul", "ol"]):
+        items = lst.find_all("li", recursive=False) or lst.find_all("li")
+        if len(items) < 3:
+            continue
+
+        rows: List[List[str]] = []
+        max_fields = 0
+        for li in items:
+            parts = [p for p in li.stripped_strings if p]
+            if not parts:
+                continue
+            rows.append(parts)
+            max_fields = max(max_fields, len(parts))
+
+        if len(rows) < 3:
+            continue
+
+        score = len(rows) * max_fields
+        best_score = len(best_rows) * best_fields
+        if score > best_score:
+            best_rows = rows
+            best_fields = max_fields
+
+    if not best_rows:
+        return None
+
+    headers = [f"col_{i+1}" for i in range(best_fields)]
+    normalized: List[List[str]] = []
+    for row in best_rows:
+        normalized.append((row + [""] * (best_fields - len(row)))[:best_fields])
+    return headers, normalized
+
+
 def _extract_repeating_blocks(
     soup: BeautifulSoup,
 ) -> Optional[Tuple[List[str], List[List[str]]]]:
     """
-    Deteksi elemen berulang berdasarkan kombinasi tag + class.
-    Ambil kandidat dengan jumlah terbanyak dan teks yang cukup panjang.
+    Deteksi elemen berulang berdasarkan kombinasi tag + class, atau parent dengan
+    banyak child sejenis. Ambil teksnya saja.
     """
-    buckets: defaultdict[Tuple[str, Tuple[str, ...]], List] = defaultdict(list)
+    buckets: defaultdict[Tuple[str, Tuple[str, ...]], List[Tag]] = defaultdict(list)
     for el in soup.find_all(True):
-        buckets[_signature(el)].append(el)
+        buckets[_signature(el)].append(el)  # kumpulkan semua elemen dengan signature sama
+
+    # Tambahkan kandidat dari parent dengan banyak child sejenis (mis. daftar kartu)
+    for parent in soup.find_all(True):
+        children = [c for c in parent.find_all(recursive=False) if isinstance(c, Tag)]
+        if len(children) < 3:
+            continue
+        first_sig = _signature(children[0])
+        if all(_signature(c) == first_sig for c in children):
+            buckets[first_sig].extend(children)
 
     candidates = []
     for sig, elements in buckets.items():
@@ -127,7 +177,13 @@ def extract_tabular_data(html: str) -> Optional[pd.DataFrame]:
         headers, rows = table_result
         return pd.DataFrame(rows, columns=headers)
 
-    # 2) Coba blok elemen berulang (kartu/list)
+    # 2) Coba <ul>/<ol> dengan <li> berulang
+    list_result = _extract_lists(soup)
+    if list_result:
+        headers, rows = list_result
+        return pd.DataFrame(rows, columns=headers)
+
+    # 3) Coba blok elemen berulang (kartu/list/div sejenis)
     repeating = _extract_repeating_blocks(soup)
     if repeating:
         headers, rows = repeating
