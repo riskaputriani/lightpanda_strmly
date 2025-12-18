@@ -195,36 +195,6 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
         asyncio.set_event_loop_policy(original_policy)
 
 
-def parse_solver_data_blob(data_blob: dict) -> dict:
-    """
-    Parses the complex JSON blob from the solver's file output and extracts
-    the most recent cookies, user_agent, and proxy.
-    """
-    latest_entry = None
-    latest_timestamp = -1
-
-    # The blob is dict where keys are domains, and values are lists of sessions.
-    for domain, sessions in data_blob.items():
-        if isinstance(sessions, list):
-            for session in sessions:
-                if isinstance(session, dict) and "unix_timestamp" in session:
-                    if session["unix_timestamp"] > latest_timestamp:
-                        latest_timestamp = session["unix_timestamp"]
-                        latest_entry = session
-
-    if not latest_entry:
-        return {} # Return empty if no valid entry found
-
-    # Extract the data from the latest entry
-    result = {}
-    if "cookies" in latest_entry and isinstance(latest_entry["cookies"], list):
-        result["cookies"] = latest_entry["cookies"]
-    if "user_agent" in latest_entry:
-        result["user_agent"] = latest_entry["user_agent"]
-    if "proxy" in latest_entry:
-        result["proxy"] = latest_entry["proxy"]
-        
-    return result
 
 def fetch_page(
     url: str,
@@ -321,8 +291,9 @@ if st.sidebar.button("Cari proxy otomatis"):
 if st.session_state.proxy_country:
     st.sidebar.info(f"Negara Proxy: {st.session_state.proxy_country}")
 
-st.sidebar.header("Cookies")
-cookie_json_text_input = st.sidebar.text_area("Paste Cookie JSON", value=st.session_state.cookie_text)
+st.sidebar.header("Overrides")
+user_agent_input = st.sidebar.text_input("User Agent")
+cookie_json_text_input = st.sidebar.text_area("Cookies (JSON Array)", value=st.session_state.cookie_text)
 cookie_file = st.sidebar.file_uploader("Upload cookies.json", type=["json"])
 
 # --- Main Page ---
@@ -335,9 +306,6 @@ if st.button("Go"):
     else:
         # --- Data Extraction from UI ---
         loaded_cookies = None
-        extracted_user_agent = None
-        extracted_proxy = None
-
         raw_json_data = None
         # Give file uploader precedence
         if cookie_file:
@@ -355,28 +323,16 @@ if st.button("Go"):
 
         if raw_json_data:
             if isinstance(raw_json_data, list):
-                # It's a simple list of cookies
                 loaded_cookies = raw_json_data
-            elif isinstance(raw_json_data, dict):
-                # It's the complex blob, so parse it
-                st.info("Parsing complex solver data blob...")
-                parsed_data = parse_solver_data_blob(raw_json_data)
-                loaded_cookies = parsed_data.get("cookies")
-                extracted_user_agent = parsed_data.get("user_agent")
-                extracted_proxy = parsed_data.get("proxy")
+            else:
+                st.error("Format cookie JSON tidak valid. Harus berupa array (daftar) objek cookie.")
+                st.stop()
             
-            # Update the text area to show the raw data that was used
             st.session_state.cookie_text = json.dumps(raw_json_data, indent=2)
 
         # --- Determine Final Settings ---
-        # Priority: 1. From blob, 2. From proxy UI, 3. None
-        final_proxy = extracted_proxy or (proxy_input if proxy_input else None)
-        final_user_agent = extracted_user_agent # Will be None if not in blob
-
-        if extracted_proxy:
-            st.info(f"Using proxy from cookie data: {final_proxy}")
-        if final_user_agent:
-            st.info(f"Using User Agent from cookie data.")
+        final_proxy = proxy_input if proxy_input else None
+        final_user_agent = user_agent_input if user_agent_input else None
 
         # --- Main Orchestration Logic ---
         with st.spinner("Mengambil halaman..."):
