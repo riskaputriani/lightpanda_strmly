@@ -1,31 +1,53 @@
 import os
 import platform
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-def install_google_chrome():
-    """
-    Downloads and installs Google Chrome. This is intended to be run on Streamlit Cloud.
-    """
-    if platform.system() == "Linux":
-        # Check if running in Streamlit Cloud
-        if "STREAMLIT_SERVER_RUNNING" in os.environ:
-            # Check if google-chrome is already installed
-            try:
-                subprocess.run(["google-chrome", "--version"], capture_output=True, check=True)
-                print("Google Chrome is already installed.")
-                return
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                print("Google Chrome not found. Installing...")
 
-            # Install Google Chrome
-            try:
-                subprocess.run(["apt-get", "update"], check=True)
-                subprocess.run(["apt-get", "install", "-y", "wget"], check=True)
-                subprocess.run(["wget", "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"], check=True)
-                subprocess.run(["dpkg", "-i", "google-chrome-stable_current_amd64.deb"], check=True)
-                subprocess.run(["rm", "google-chrome-stable_current_amd64.deb"], check=True)
-                print("Google Chrome installed successfully.")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install Google Chrome: {e}", file=sys.stderr)
-                sys.exit(1)
+def _chrome_exists() -> bool:
+    """
+    Check if a Chrome binary is already available.
+    """
+    return bool(
+        shutil.which("google-chrome")
+        or shutil.which("chrome")
+        or shutil.which("chromium")
+    )
+
+
+def install_google_chrome() -> None:
+    """
+    Ensure Google Chrome is installed (Linux only).
+    Intended for Streamlit Cloud or similar environments where Chrome might be missing.
+    """
+    if platform.system() != "Linux":
+        return
+
+    if _chrome_exists():
+        print("Google Chrome is already installed.")
+        return
+
+    print("Google Chrome not found. Installing via apt...")
+
+    deb_path = Path("google-chrome-stable_current_amd64.deb")
+
+    try:
+        subprocess.run(["apt-get", "update", "-y"], check=True)
+        subprocess.run(["apt-get", "install", "-y", "wget"], check=True)
+        subprocess.run(
+            ["wget", "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"],
+            check=True,
+        )
+        subprocess.run(
+            ["apt-get", "install", "-y", str(deb_path)],
+            check=True,
+        )
+        print("Google Chrome installed successfully.")
+        subprocess.run(["google-chrome", "--version"], check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"Failed to install Google Chrome: {exc}", file=sys.stderr)
+    finally:
+        if deb_path.exists():
+            deb_path.unlink()
