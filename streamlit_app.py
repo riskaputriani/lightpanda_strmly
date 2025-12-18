@@ -44,14 +44,21 @@ def _ensure_scheme(value: str) -> str:
     return trimmed
 
 
-def fetch_title_from_url(url: str, timeout: int = 30_000) -> str:
-    """Use Playwright to launch a local Chromium browser and return the title."""
+def fetch_page(
+    url: str, *, take_screenshot: bool = False, timeout: int = 30_000
+) -> dict:
+    """Use Playwright to launch a local Chromium browser, return title and optional screenshot bytes."""
     ensure_playwright_browsers_installed()
     with sync_playwright() as playwright:
         with playwright.chromium.launch(headless=True) as browser:
             page = browser.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-            return page.title()
+            result = {"title": page.title()}
+
+            if take_screenshot:
+                result["screenshot"] = page.screenshot(full_page=True)
+
+            return result
 
 
 def _system_info_text() -> str:
@@ -85,6 +92,9 @@ st.set_page_config(page_title="Playwright Title Reader", layout="centered")
 st.title("Ambil Title dari URL dengan Playwright")
 st.caption("Tekan tombol agar Playwright meluncurkan Chromium lokal dan membaca judul.")
 
+st.sidebar.header("Opsi")
+screenshot_button = st.sidebar.button("Ambil screenshot (full page)")
+
 st.subheader("Playwright Local Browser")
 st.caption(
     "Playwright akan mencoba menjalankan `python -m playwright install chromium` sekali "
@@ -96,7 +106,7 @@ with st.expander("Info Sistem"):
     st.code(_system_info_text(), language="text")
 st.markdown("---")
 
-url_input = st.text_input("Masukkan URL yang ingin diambil judulnya", value="")
+url_input = st.text_input("Masukkan URL yang ingin diambil datanya", value="")
 
 if st.button("Dapatkan Title"):
     normalized_url = _ensure_scheme(url_input)
@@ -105,8 +115,31 @@ if st.button("Dapatkan Title"):
     else:
         with st.spinner("Memuat dan membaca title..."):
             try:
-                title = fetch_title_from_url(normalized_url)
+                result = fetch_page(normalized_url, take_screenshot=False)
                 st.success("Title ditemukan:")
-                st.code(title)
+                st.code(result.get("title", "-"))
             except PlaywrightError as exc:
                 st.error(f"Gagal mengambil title: {exc}")
+
+if screenshot_button:
+    normalized_url = _ensure_scheme(url_input)
+    if not normalized_url:
+        st.error("Silakan masukkan URL terlebih dahulu.")
+    else:
+        with st.spinner("Memuat dan mengambil screenshot..."):
+            try:
+                result = fetch_page(normalized_url, take_screenshot=True)
+                st.success("Screenshot berhasil diambil:")
+                st.code(f"URL: {normalized_url}\nTitle: {result.get('title', '-')}")
+
+                if "screenshot" in result:
+                    st.subheader("Screenshot (tidak disimpan ke disk)")
+                    st.image(result["screenshot"])
+                    st.download_button(
+                        "Download screenshot",
+                        data=result["screenshot"],
+                        file_name="screenshot.png",
+                        mime="image/png",
+                    )
+            except PlaywrightError as exc:
+                st.error(f"Gagal mengambil screenshot: {exc}")
