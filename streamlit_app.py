@@ -1,7 +1,9 @@
 import asyncio
+import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import streamlit as st
 from playwright.async_api import Error, async_playwright
@@ -23,18 +25,29 @@ def get_chrome_executable_path() -> str | None:
 @st.cache_resource
 def ensure_playwright_chrome_installed() -> None:
     """
-    Install Playwright's Chrome channel if it is missing.
+    Install Playwright's Chrome channel into a local, user-writable folder.
+    Avoids sudo/apt so it works on non-root environments.
     """
+    browsers_dir = Path(".pw-browsers").resolve()
+    env = os.environ.copy()
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
+
     try:
         subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chrome"],
             check=True,
             capture_output=True,
+            env=env,
         )
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode(errors="ignore").strip()
         message = stderr or str(exc)
-        raise RuntimeError(f"Failed to install Playwright Chrome: {message}") from exc
+        raise RuntimeError(
+            "Failed to install Playwright Chrome without sudo. "
+            "Try running: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chrome\n"
+            f"Details: {message}"
+        ) from exc
 
 
 def _normalize_url(url: str) -> str:

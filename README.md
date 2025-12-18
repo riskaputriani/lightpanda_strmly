@@ -30,3 +30,4 @@ streamlit run streamlit_app.py
 - On Streamlit Cloud/Linux, `install_google_chrome()` ensures Google Chrome is present. Locally, make sure Chrome is installed or Playwright's `chrome` channel is available.
 - The app always opens pages headlessly via Playwright and returns the title. Checkboxes let you also fetch a screenshot and/or HTML.
 - On non-root Linux environments where `apt` is unavailable, the Chrome install step is skipped; the app will fall back to Playwright's bundled Chrome channel (ensure `python -m playwright install chrome` has been run).
+- If you cannot install system Chrome, you can download the Playwright-managed Chrome into a local folder (no sudo) with: `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chrome`.
