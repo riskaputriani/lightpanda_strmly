@@ -1,9 +1,9 @@
 import json
 import sys
+import re
 from pathlib import Path
-from collections import defaultdict
 from io import BytesIO
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import streamlit as st
 
@@ -18,7 +18,7 @@ from components.url_utils import ensure_scheme
 
 try:
     import pandas as pd
-    from bs4 import BeautifulSoup, Tag
+    from bs4 import BeautifulSoup
     from lxml import html as lxml_html
     from lxml import etree
 except Exception as exc:  # pragma: no cover - import guard
@@ -31,278 +31,106 @@ init_session_state()
 
 st.title("Auto Table Scraper")
 st.caption(
-    "Masukkan URL, deteksi blok elemen berulang (produk, harga, dsb) jadi tabel otomatis, dan unduh sebagai JSON/CSV/Excel."
+    "Masukkan URL, definisikan kolom + selector (XPath/CSS/JS), dan scrap baris berulang otomatis. Unduh JSON/CSV/Excel."
 )
 
 
 # --------------------------------------------------------------------------- #
 # Parsing Helpers
 # --------------------------------------------------------------------------- #
-def _parse_html_table(soup: BeautifulSoup) -> Optional[Tuple[List[str], List[List[str]]]]:
-    """Cari tabel HTML terbaik (paling banyak baris)."""
-    best_headers: List[str] = []
-    best_rows: List[List[str]] = []
-    best_count = 0
-
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        if len(rows) < 2:
-            continue
-
-        # header
-        header_cells = rows[0].find_all(["th", "td"])
-        headers = [cell.get_text(" ", strip=True) or f"col_{i+1}" for i, cell in enumerate(header_cells)]
-
-        body_rows = []
-        for tr in rows[1:]:
-            cells = tr.find_all(["td", "th"])
-            if not cells:
-                continue
-            body_rows.append([cell.get_text(" ", strip=True) for cell in cells])
-
-        if len(body_rows) > best_count:
-            best_headers = headers
-            best_rows = body_rows
-            best_count = len(body_rows)
-
-    if best_rows:
-        return best_headers, best_rows
-    return None
+def _apply_index(selector: str, idx: int) -> str:
+    """Ganti nth-child(...) angka pertama dengan idx, atau {i} placeholder."""
+    if "{i}" in selector:
+        return selector.replace("{i}", str(idx))
+    return re.sub(r"nth-child\(\s*\d+\s*\)", f"nth-child({idx})", selector, count=1)
 
 
-def _signature(element) -> Tuple[str, Tuple[str, ...]]:
-    classes = tuple(sorted(element.get("class", [])))
-    return element.name, classes
-
-
-def _row_fields_from_tag(el: Tag) -> Dict[str, str]:
-    """Ambil field terstruktur dari satu kartu/list item."""
-    fields: Dict[str, str] = {}
-
-    # Gambar
-    img = el.find("img")
-    if img and img.get("src"):
-        fields["image"] = img["src"]
-    if img and img.get("alt"):
-        fields["image_alt"] = img["alt"]
-
-    # Judul dan url produk
-    h = el.find(["h1", "h2", "h3", "h4"])
-    if h:
-        fields["title"] = h.get_text(" ", strip=True)
-        link = h.find("a")
-        if link and link.get("href"):
-            fields["url_product"] = link["href"]
-    else:
-        link = el.find("a")
-        if link and link.get_text(strip=True):
-            fields["title"] = link.get_text(" ", strip=True)
-        if link and link.get("href"):
-            fields["url_product"] = link["href"]
-
-    # Harga
-    price_node = el.find(class_="price")
-    if price_node and price_node.get_text(strip=True):
-        fields["price"] = price_node.get_text(strip=True)
-
-    # Short description
-    short_desc = el.find(class_="short-description")
-    if short_desc:
-        fields["short_description"] = short_desc.get_text(" ", strip=True)
-
-    # Fallback teks gabungan
-    if "title" not in fields:
-        fields["title"] = el.get_text(" ", strip=True)[:200]
-
-    return fields
-
-
-def _extract_lists(
-    soup: BeautifulSoup,
-) -> Optional[Tuple[List[str], List[List[str]]]]:
-    """
-    Cari <ul>/<ol> dengan banyak <li>. Ambil teks tiap li (tanpa HTML).
-    """
-    best_rows: List[List[str]] = []
-    best_fields = 0
-    for lst in soup.find_all(["ul", "ol"]):
-        items = lst.find_all("li", recursive=False) or lst.find_all("li")
-        if len(items) < 3:
-            continue
-
-        rows: List[List[str]] = []
-        max_fields = 0
-        for li in items:
-            parts = [p for p in li.stripped_strings if p]
-            if not parts:
-                continue
-            rows.append(parts)
-            max_fields = max(max_fields, len(parts))
-
-        if len(rows) < 3:
-            continue
-
-        score = len(rows) * max_fields
-        best_score = len(best_rows) * best_fields
-        if score > best_score:
-            best_rows = rows
-            best_fields = max_fields
-
-    if not best_rows:
-        return None
-
-    headers = [f"col_{i+1}" for i in range(best_fields)]
-    normalized: List[List[str]] = []
-    for row in best_rows:
-        normalized.append((row + [""] * (best_fields - len(row)))[:best_fields])
-    return headers, normalized
-
-
-def _extract_repeating_blocks(
-    soup: BeautifulSoup,
-) -> Optional[Tuple[List[str], List[List[str]]]]:
-    """
-    Deteksi elemen berulang berbasis struktur kartu/list:
-    - Pilih parent yang memiliki banyak anak dengan tag+class sama.
-    - Jatuhkan ke elemen anak itu sebagai baris.
-    """
-    best_children: List[Tag] = []
-    best_sig: Optional[Tuple[str, Tuple[str, ...]]] = None
-    best_score = 0
-
-    for parent in soup.find_all(True):
-        children = [c for c in parent.find_all(recursive=False) if isinstance(c, Tag)]
-        if len(children) < 3:
-            continue
-        sig = _signature(children[0])
-        if not all(_signature(c) == sig for c in children):
-            continue
-
-        # score: banyaknya anak * panjang teks rata-rata
-        texts = [" ".join(c.stripped_strings) for c in children]
-        avg_len = sum(len(t) for t in texts) / len(texts) if texts else 0
-        score = len(children) * (avg_len + 1)
-        if score > best_score:
-            best_children = children
-            best_sig = sig
-            best_score = score
-
-    if not best_children:
-        return None
-
-    rows_dicts = [_row_fields_from_tag(c) for c in best_children]
-    # Buat header union
-    headers_set = set()
-    for rd in rows_dicts:
-        headers_set.update(rd.keys())
-    headers = sorted(headers_set)
-
-    rows: List[List[str]] = []
-    for rd in rows_dicts:
-        rows.append([rd.get(h, "") for h in headers])
-
-    return headers, rows
-
-
-def _extract_by_xpath(html: str, xpath_expr: str) -> Optional[pd.DataFrame]:
-    """Gunakan XPath untuk memilih elemen berulang. Setiap node diproses seperti kartu."""
-    if not xpath_expr.strip():
-        return None
+def _exists(selector_type: str, selector: str, soup: BeautifulSoup, tree) -> bool:
     try:
-        tree = lxml_html.fromstring(html)
-        nodes = tree.xpath(xpath_expr)
-    except (etree.XPathError, ValueError):
-        return None
-
-    cards: List[Tag] = []
-    for node in nodes:
-        if not hasattr(node, "tag"):
-            continue
-        fragment = etree.tostring(node, encoding="unicode")
-        soup = BeautifulSoup(fragment, "html.parser")
-        tag = soup.find(True)
-        if tag:
-            cards.append(tag)
-
-    if len(cards) < 1:
-        return None
-
-    rows_dicts = [_row_fields_from_tag(c) for c in cards]
-    headers_set = set()
-    for rd in rows_dicts:
-        headers_set.update(rd.keys())
-    headers = sorted(headers_set)
-    rows = [[rd.get(h, "") for h in headers] for rd in rows_dicts]
-    return pd.DataFrame(rows, columns=headers)
+        if selector_type == "xpath":
+            nodes = tree.xpath(selector)
+            return bool(nodes)
+        else:  # css or js treated the same
+            return soup.select_one(selector) is not None
+    except Exception:
+        return False
 
 
-def _extract_by_css(html: str, selector: str) -> Optional[pd.DataFrame]:
-    """Gunakan CSS selector untuk memilih elemen berulang (BeautifulSoup select)."""
-    if not selector.strip():
-        return None
+def _extract_value(selector_type: str, selector: str, soup: BeautifulSoup, tree) -> str:
+    try:
+        if selector_type == "xpath":
+            nodes = tree.xpath(selector)
+            if not nodes:
+                return ""
+            node = nodes[0]
+            if isinstance(node, str):
+                return node.strip()
+            if hasattr(node, "text_content"):
+                return node.text_content().strip()
+            return str(node).strip()
+        else:  # css or js
+            el = soup.select_one(selector)
+            if not el:
+                return ""
+            return el.get_text(" ", strip=True)
+    except Exception:
+        return ""
+
+
+def extract_with_mappings(html: str, mappings: List[Dict[str, str]]) -> Optional[pd.DataFrame]:
+    """Extract rows berdasarkan daftar mapping kolom + selector (dengan opsi repeat)."""
     soup = BeautifulSoup(html, "html.parser")
-    nodes = soup.select(selector)
-    if not nodes:
+    tree = lxml_html.fromstring(html)
+
+    if not mappings:
         return None
 
-    rows_dicts = [_row_fields_from_tag(n) for n in nodes if isinstance(n, Tag)]
-    if not rows_dicts:
+    any_repeat = any(m.get("repeat_selector") for m in mappings)
+    rows: List[Dict[str, str]] = []
+
+    if not any_repeat:
+        row = {}
+        for m in mappings:
+            row[m["name"]] = _extract_value(m["selector_type"], m["selector"], soup, tree)
+        rows.append(row)
+    else:
+        idx = 1
+        while True:
+            row: Dict[str, str] = {}
+            repeat_hit = False
+
+            for m in mappings:
+                base_selector = m.get("selector", "")
+                selector_type = m.get("selector_type", "css")
+                repeat_selector = m.get("repeat_selector") or ""
+
+                selector_idx = _apply_index(base_selector, idx) if repeat_selector else base_selector
+                repeat_idx = _apply_index(repeat_selector, idx) if repeat_selector else ""
+
+                if repeat_selector:
+                    if not _exists(selector_type, repeat_idx, soup, tree):
+                        row[m["name"]] = ""
+                        continue
+                    repeat_hit = True
+
+                row[m["name"]] = _extract_value(selector_type, selector_idx, soup, tree)
+
+            if not repeat_hit:
+                break
+
+            rows.append(row)
+            idx += 1
+
+    if not rows:
         return None
 
-    headers_set = set()
-    for rd in rows_dicts:
-        headers_set.update(rd.keys())
-    headers = sorted(headers_set)
-    rows = [[rd.get(h, "") for h in headers] for rd in rows_dicts]
-    return pd.DataFrame(rows, columns=headers)
-
-
-def extract_tabular_data(
-    html: str,
-    xpath_filter: Optional[str] = None,
-    css_filter: Optional[str] = None,
-    js_filter: Optional[str] = None,
-) -> Optional[pd.DataFrame]:
-    """Kembalikan DataFrame dari tabel HTML atau blok elemen berulang."""
-    soup = BeautifulSoup(html, "html.parser")
-
-    # 0) Jika ada XPath, coba dulu
-    if xpath_filter:
-        df_xpath = _extract_by_xpath(html, xpath_filter)
-        if df_xpath is not None and not df_xpath.empty:
-            return df_xpath
-
-    # 0b) CSS selector
-    if css_filter:
-        df_css = _extract_by_css(html, css_filter)
-        if df_css is not None and not df_css.empty:
-            return df_css
-
-    # 0c) JS selector (treated same as CSS/querySelectorAll)
-    if js_filter:
-        df_js = _extract_by_css(html, js_filter)
-        if df_js is not None and not df_js.empty:
-            return df_js
-
-    # 1) Coba tabel eksplisit
-    table_result = _parse_html_table(soup)
-    if table_result:
-        headers, rows = table_result
-        return pd.DataFrame(rows, columns=headers)
-
-    # 2) Coba <ul>/<ol> dengan <li> berulang
-    list_result = _extract_lists(soup)
-    if list_result:
-        headers, rows = list_result
-        return pd.DataFrame(rows, columns=headers)
-
-    # 3) Coba blok elemen berulang (kartu/list/div sejenis)
-    repeating = _extract_repeating_blocks(soup)
-    if repeating:
-        headers, rows = repeating
-        return pd.DataFrame(rows, columns=headers)
-
-    return None
+    # Normalisasi kolom (ikut urutan input)
+    headers = [m["name"] for m in mappings]
+    df = pd.DataFrame(rows)
+    for h in headers:
+        if h not in df.columns:
+            df[h] = ""
+    return df[headers]
 
 
 # --------------------------------------------------------------------------- #
@@ -310,7 +138,7 @@ def extract_tabular_data(
 # --------------------------------------------------------------------------- #
 st.sidebar.header("Scraping Options")
 use_solver = st.sidebar.checkbox("Gunakan solver Cloudflare jika perlu", value=True)
-get_html = True  # mandatory for table detection
+get_html = True  # mandatory for mapping extraction
 take_screenshot = st.sidebar.checkbox("Ambil screenshot (opsional)", value=False)
 
 st.sidebar.header("Proxy & Overrides")
@@ -329,24 +157,64 @@ st.session_state.proxy_address = proxy_input
 # Main form
 # --------------------------------------------------------------------------- #
 url_input = st.text_input("Masukkan URL", value="", placeholder="https://contoh.com/produk")
-xpath_input = st.text_input(
-    "XPath (opsional) untuk memilih elemen berulang",
-    value="",
-    placeholder="//div[contains(@class,'product')]",
-    help="Jika diisi, dipakai lebih dulu. Contoh: //div[@class='row product']",
-)
-css_input = st.text_input(
-    "CSS selector (opsional)",
-    value="",
-    placeholder=".row.product",
-    help="Dipakai jika XPath kosong. Contoh: .row.product",
-)
-js_input = st.text_input(
-    "JS selector (querySelectorAll, opsional)",
-    value="",
-    placeholder="div.row.product",
-    help="Dipakai jika XPath dan CSS kosong. Sama seperti querySelectorAll.",
-)
+
+st.subheader("Kolom & Selector")
+if "column_mappings" not in st.session_state:
+    st.session_state.column_mappings = [
+        {
+            "name": "Products",
+            "selector_type": "css",
+            "selector": "body > div.main > div > div.products-wrap > div.products > div:nth-child(1) > div.col-8.description > h3 > a",
+            "repeat_selector": "body > div.main > div > div.products-wrap > div.products > div:nth-child(1)",
+        }
+    ]
+
+new_mappings: List[Dict[str, str]] = []
+for idx, mapping in enumerate(st.session_state.column_mappings):
+    st.markdown(f"**Kolom {idx+1}**")
+    col1, col2 = st.columns(2)
+    name = col1.text_input("Nama kolom", value=mapping.get("name", f"col_{idx+1}"), key=f"name_{idx}")
+    selector_type = col2.selectbox(
+        "Tipe selector",
+        options=["css", "xpath", "js"],
+        index=["css", "xpath", "js"].index(mapping.get("selector_type", "css")),
+        key=f"type_{idx}",
+    )
+    selector = st.text_input(
+        "Selector untuk nilai",
+        value=mapping.get("selector", ""),
+        key=f"selector_{idx}",
+        help="Bisa pakai nth-child(1) atau {i} sebagai placeholder untuk index.",
+    )
+    repeat_selector = st.text_input(
+        "Selector repeat (opsional)",
+        value=mapping.get("repeat_selector", ""),
+        key=f"repeat_{idx}",
+        help="Jika diisi, akan diulang dengan nth-child / {i} naik 1,2,3... sampai tidak ada hasil.",
+    )
+    new_mappings.append(
+        {
+            "name": name.strip() or f"col_{idx+1}",
+            "selector_type": selector_type,
+            "selector": selector.strip(),
+            "repeat_selector": repeat_selector.strip(),
+        }
+    )
+    st.divider()
+
+if st.button("Tambah kolom"):
+    st.session_state.column_mappings.append(
+        {
+            "name": f"col_{len(st.session_state.column_mappings)+1}",
+            "selector_type": "css",
+            "selector": "",
+            "repeat_selector": "",
+        }
+    )
+    st.experimental_rerun()
+
+# Persist updated mappings
+st.session_state.column_mappings = new_mappings
 
 if st.button("Extract Table"):
     normalized_url = ensure_scheme(url_input)
@@ -427,21 +295,9 @@ if st.button("Extract Table"):
         st.error("HTML tidak tersedia dari hasil fetch. Aktifkan Get HTML.")
         st.stop()
 
-    df = extract_tabular_data(
-        html_content,
-        xpath_filter=xpath_input.strip() or None,
-        css_filter=css_input.strip() or None,
-        js_filter=js_input.strip() or None,
-    )
+    df = extract_with_mappings(html_content, st.session_state.column_mappings)
     if df is None or df.empty:
-        msg = "Tidak menemukan struktur tabel atau blok elemen berulang yang dapat diubah menjadi tabel."
-        if xpath_input.strip():
-            msg += " XPath tidak menghasilkan data; coba kosongkan atau perbaiki ekspresi."
-        elif css_input.strip():
-            msg += " CSS selector tidak menghasilkan data; coba kosongkan atau perbaiki."
-        elif js_input.strip():
-            msg += " JS selector tidak menghasilkan data; coba kosongkan atau perbaiki."
-        st.error(msg)
+        st.error("Tidak menemukan data dengan mapping/selector yang diberikan. Periksa selector atau repeat.")
         st.stop()
 
     st.success(f"Berhasil mengekstrak {len(df)} baris.")
@@ -466,7 +322,6 @@ if st.button("Extract Table"):
 
     # Optional info
     st.info(
-        "Urutan deteksi: (1) XPath (jika diisi), (2) CSS selector, (3) JS selector, "
-        "(4) tabel HTML, (5) list <ul>/<ol>, (6) parent dengan banyak child sejenis. "
-        "Kolom dibuat dari gabungan field yang ditemukan."
+        "Gunakan placeholder nth-child(1) atau {i} untuk selector yang berulang. "
+        "Selector repeat menentukan elemen list yang akan diiterasi hingga habis."
     )
