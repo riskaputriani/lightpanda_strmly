@@ -19,6 +19,8 @@ from components.url_utils import ensure_scheme
 try:
     import pandas as pd
     from bs4 import BeautifulSoup, Tag
+    from lxml import html as lxml_html
+    from lxml import etree
 except Exception as exc:  # pragma: no cover - import guard
     st.error(f"Dependency error: {exc}. Pastikan beautifulsoup4 dan pandas terinstall.")
     raise
@@ -71,6 +73,48 @@ def _parse_html_table(soup: BeautifulSoup) -> Optional[Tuple[List[str], List[Lis
 def _signature(element) -> Tuple[str, Tuple[str, ...]]:
     classes = tuple(sorted(element.get("class", [])))
     return element.name, classes
+
+
+def _row_fields_from_tag(el: Tag) -> Dict[str, str]:
+    """Ambil field terstruktur dari satu kartu/list item."""
+    fields: Dict[str, str] = {}
+
+    # Gambar
+    img = el.find("img")
+    if img and img.get("src"):
+        fields["image"] = img["src"]
+    if img and img.get("alt"):
+        fields["image_alt"] = img["alt"]
+
+    # Judul dan url produk
+    h = el.find(["h1", "h2", "h3", "h4"])
+    if h:
+        fields["title"] = h.get_text(" ", strip=True)
+        link = h.find("a")
+        if link and link.get("href"):
+            fields["url_product"] = link["href"]
+    else:
+        link = el.find("a")
+        if link and link.get_text(strip=True):
+            fields["title"] = link.get_text(" ", strip=True)
+        if link and link.get("href"):
+            fields["url_product"] = link["href"]
+
+    # Harga
+    price_node = el.find(class_="price")
+    if price_node and price_node.get_text(strip=True):
+        fields["price"] = price_node.get_text(strip=True)
+
+    # Short description
+    short_desc = el.find(class_="short-description")
+    if short_desc:
+        fields["short_description"] = short_desc.get_text(" ", strip=True)
+
+    # Fallback teks gabungan
+    if "title" not in fields:
+        fields["title"] = el.get_text(" ", strip=True)[:200]
+
+    return fields
 
 
 def _extract_lists(
@@ -146,48 +190,7 @@ def _extract_repeating_blocks(
     if not best_children:
         return None
 
-    def _row_fields(el: Tag) -> Dict[str, str]:
-        """Ambil field terstruktur dari kartu/list."""
-        fields: Dict[str, str] = {}
-
-        # Gambar
-        img = el.find("img")
-        if img and img.get("src"):
-            fields["image"] = img["src"]
-        if img and img.get("alt"):
-            fields["image_alt"] = img["alt"]
-
-        # Judul dan url produk
-        h = el.find(["h1", "h2", "h3", "h4"])
-        if h:
-            fields["title"] = h.get_text(" ", strip=True)
-            link = h.find("a")
-            if link and link.get("href"):
-                fields["url_product"] = link["href"]
-        else:
-            link = el.find("a")
-            if link and link.get_text(strip=True):
-                fields["title"] = link.get_text(" ", strip=True)
-            if link and link.get("href"):
-                fields["url_product"] = link["href"]
-
-        # Harga
-        price_node = el.find(class_="price")
-        if price_node and price_node.get_text(strip=True):
-            fields["price"] = price_node.get_text(strip=True)
-
-        # Short description
-        short_desc = el.find(class_="short-description")
-        if short_desc:
-            fields["short_description"] = short_desc.get_text(" ", strip=True)
-
-        # Fallback teks gabungan
-        if "title" not in fields:
-            fields["title"] = el.get_text(" ", strip=True)[:200]
-
-        return fields
-
-    rows_dicts = [_row_fields(c) for c in best_children]
+    rows_dicts = [_row_fields_from_tag(c) for c in best_children]
     # Buat header union
     headers_set = set()
     for rd in rows_dicts:
@@ -201,9 +204,47 @@ def _extract_repeating_blocks(
     return headers, rows
 
 
-def extract_tabular_data(html: str) -> Optional[pd.DataFrame]:
+def _extract_by_xpath(html: str, xpath_expr: str) -> Optional[pd.DataFrame]:
+    """Gunakan XPath untuk memilih elemen berulang. Setiap node diproses seperti kartu."""
+    if not xpath_expr.strip():
+        return None
+    try:
+        tree = lxml_html.fromstring(html)
+        nodes = tree.xpath(xpath_expr)
+    except (etree.XPathError, ValueError):
+        return None
+
+    cards: List[Tag] = []
+    for node in nodes:
+        if not hasattr(node, "tag"):
+            continue
+        fragment = etree.tostring(node, encoding="unicode")
+        soup = BeautifulSoup(fragment, "html.parser")
+        tag = soup.find(True)
+        if tag:
+            cards.append(tag)
+
+    if len(cards) < 1:
+        return None
+
+    rows_dicts = [_row_fields_from_tag(c) for c in cards]
+    headers_set = set()
+    for rd in rows_dicts:
+        headers_set.update(rd.keys())
+    headers = sorted(headers_set)
+    rows = [[rd.get(h, "") for h in headers] for rd in rows_dicts]
+    return pd.DataFrame(rows, columns=headers)
+
+
+def extract_tabular_data(html: str, xpath_filter: Optional[str] = None) -> Optional[pd.DataFrame]:
     """Kembalikan DataFrame dari tabel HTML atau blok elemen berulang."""
     soup = BeautifulSoup(html, "html.parser")
+
+    # 0) Jika ada XPath, coba dulu
+    if xpath_filter:
+        df_xpath = _extract_by_xpath(html, xpath_filter)
+        if df_xpath is not None and not df_xpath.empty:
+            return df_xpath
 
     # 1) Coba tabel eksplisit
     table_result = _parse_html_table(soup)
@@ -250,6 +291,12 @@ st.session_state.proxy_address = proxy_input
 # Main form
 # --------------------------------------------------------------------------- #
 url_input = st.text_input("Masukkan URL", value="", placeholder="https://contoh.com/produk")
+xpath_input = st.text_input(
+    "XPath (opsional) untuk memilih elemen berulang",
+    value="",
+    placeholder="//div[contains(@class,'product')]",
+    help="Jika diisi, akan dipakai terlebih dulu untuk menemukan list item (mis. //div[@class='row product']).",
+)
 
 if st.button("Extract Table"):
     normalized_url = ensure_scheme(url_input)
@@ -330,13 +377,16 @@ if st.button("Extract Table"):
         st.error("HTML tidak tersedia dari hasil fetch. Aktifkan Get HTML.")
         st.stop()
 
-    df = extract_tabular_data(html_content)
+    df = extract_tabular_data(html_content, xpath_filter=xpath_input.strip() or None)
     if df is None or df.empty:
-        st.error("Tidak menemukan struktur tabel atau blok elemen berulang yang dapat diubah menjadi tabel.")
+        msg = "Tidak menemukan struktur tabel atau blok elemen berulang yang dapat diubah menjadi tabel."
+        if xpath_input.strip():
+            msg += " XPath tidak menghasilkan data; coba kosongkan atau perbaiki ekspresi."
+        st.error(msg)
         st.stop()
 
     st.success(f"Berhasil mengekstrak {len(df)} baris.")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
     # Downloads
     json_bytes = df.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
@@ -357,6 +407,6 @@ if st.button("Extract Table"):
 
     # Optional info
     st.info(
-        "Deteksi otomatis memakai tabel HTML jika ada. Jika tidak ada tabel, pencarian berdasarkan blok elemen "
-        "berulang (tag + class). Kolom dinamai generik col_1, col_2, dst."
+        "Urutan deteksi: (1) XPath jika diisi, (2) tabel HTML, (3) list <ul>/<ol>, "
+        "(4) parent dengan banyak child sejenis (kartu/list). Kolom dibuat dari gabungan field yang ditemukan."
     )
