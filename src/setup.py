@@ -29,6 +29,11 @@ def install_google_chrome() -> None:
         print("Google Chrome is already installed.")
         return
 
+    # Skip install when we do not have permissions (common on hosted/non-root environments).
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        print("Google Chrome not found, and apt install skipped (non-root environment).")
+        return
+
     print("Google Chrome not found. Installing via apt...")
 
     deb_path = Path("google-chrome-stable_current_amd64.deb")
@@ -47,7 +52,11 @@ def install_google_chrome() -> None:
         print("Google Chrome installed successfully.")
         subprocess.run(["google-chrome", "--version"], check=True)
     except subprocess.CalledProcessError as exc:
-        print(f"Failed to install Google Chrome: {exc}", file=sys.stderr)
+        print(
+            "Failed to install Google Chrome via apt (likely missing permissions). "
+            "The app will fall back to Playwright's bundled Chrome channel.",
+            file=sys.stderr,
+        )
     finally:
         if deb_path.exists():
             deb_path.unlink()
