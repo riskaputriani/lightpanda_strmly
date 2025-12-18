@@ -5,7 +5,6 @@ import platform
 import random
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -27,23 +26,29 @@ if sys.platform == "win32":
     except (RuntimeError, AttributeError):
         pass
 
+CHROME_DIR = Path.home() / ".local" / "chrome"
+CHROME_BIN = CHROME_DIR / "chrome"
+INSTALL_SCRIPT = Path(__file__).parent / "install_chrome.sh"
 
-_BROWSER_INSTALL_MARKER = Path(tempfile.gettempdir()) / "playwright-chromium-installed.marker"
 
+def ensure_chrome_installed() -> str:
+    """
+    Ensure Chrome binary is available under ~/.local/chrome using the provided install script.
+    Returns the path to the Chrome binary.
+    """
+    if CHROME_BIN.exists():
+        return str(CHROME_BIN)
 
-def ensure_playwright_browsers_installed() -> None:
-    """Run a one-time Playwright install so future launches find the Chromium executable."""
-    if _BROWSER_INSTALL_MARKER.exists():
-        return
-    command = [sys.executable, "-m", "playwright", "install", "chromium"]
-    try:
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as exc:
-        raise PlaywrightError(
-            "Unable to install Chromium automatically. "
-            "Run `python -m playwright install chromium` and retry."
-        ) from exc
-    _BROWSER_INSTALL_MARKER.write_text("installed")
+    subprocess.run(
+        ["bash", str(INSTALL_SCRIPT)],
+        check=True,
+        env=os.environ.copy(),
+    )
+
+    if not CHROME_BIN.exists():
+        raise PlaywrightError("Chrome installation failed; chrome binary not found.")
+
+    return str(CHROME_BIN)
 
 
 def _ensure_scheme(value: str) -> str:
@@ -100,30 +105,25 @@ def find_best_proxy():
     return None
 
 @st.cache_resource
-def get_playwright_browser_path() -> str:
+def get_chrome_path() -> str:
     """
-    Gets the executable path for the Playwright-managed Chromium browser.
-    Ensures browsers are installed first. Caches the result.
+    Ensure Chrome is installed via the bundled shell script and return its path.
     """
     if st.session_state.get("browser_path"):
         return st.session_state.browser_path
 
-    ensure_playwright_browsers_installed()
-    st.info("Getting Playwright browser path...")
-    with sync_playwright() as p:
-        browser_path = p.chromium.executable_path
-        st.session_state.browser_path = browser_path
-        st.info(f"Browser path found: {browser_path}")
-        return browser_path
+    chrome_path = ensure_chrome_installed()
+    st.session_state.browser_path = chrome_path
+    return chrome_path
 
 def run_solver(url: str, proxy: str | None) -> list[dict]:
     """
     Runs the Cloudflare solver as a standalone process and returns the cookies.
     """
     try:
-        browser_path = get_playwright_browser_path()
+        browser_path = get_chrome_path()
     except Exception as e:
-        st.error(f"Could not determine Playwright browser path: {e}")
+        st.error(f"Could not determine Chrome path: {e}")
         return []
 
     async def _solve() -> list[dict]:
@@ -209,7 +209,7 @@ def fetch_page(
     timeout: int = 30_000,
 ) -> dict:
     """Use Playwright to launch a browser, get page data, and detect CF challenges."""
-    ensure_playwright_browsers_installed()
+    chrome_path = get_chrome_path()
 
     context_options = {}
     if proxy:
@@ -229,7 +229,15 @@ def fetch_page(
         context_options["user_agent"] = user_agent
 
     with sync_playwright() as playwright:
-        with playwright.chromium.launch(headless=True) as browser:
+        with playwright.chromium.launch(
+            executable_path=chrome_path,
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ],
+        ) as browser:
             context = browser.new_context(**context_options)
             if cookies:
                 sanitized_cookies = sanitize_cookies(cookies)
