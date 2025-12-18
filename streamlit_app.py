@@ -178,6 +178,37 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
         asyncio.set_event_loop_policy(original_policy)
 
 
+def parse_solver_data_blob(data_blob: dict) -> dict:
+    """
+    Parses the complex JSON blob from the solver's file output and extracts
+    the most recent cookies, user_agent, and proxy.
+    """
+    latest_entry = None
+    latest_timestamp = -1
+
+    # The blob is dict where keys are domains, and values are lists of sessions.
+    for domain, sessions in data_blob.items():
+        if isinstance(sessions, list):
+            for session in sessions:
+                if isinstance(session, dict) and "unix_timestamp" in session:
+                    if session["unix_timestamp"] > latest_timestamp:
+                        latest_timestamp = session["unix_timestamp"]
+                        latest_entry = session
+
+    if not latest_entry:
+        return {} # Return empty if no valid entry found
+
+    # Extract the data from the latest entry
+    result = {}
+    if "cookies" in latest_entry and isinstance(latest_entry["cookies"], list):
+        result["cookies"] = latest_entry["cookies"]
+    if "user_agent" in latest_entry:
+        result["user_agent"] = latest_entry["user_agent"]
+    if "proxy" in latest_entry:
+        result["proxy"] = latest_entry["proxy"]
+        
+    return result
+
 def fetch_page(
     url: str,
     *,
@@ -185,6 +216,7 @@ def fetch_page(
     get_html: bool = False,
     proxy: str | None = None,
     cookies: list[dict] | None = None,
+    user_agent: str | None = None,
     timeout: int = 30_000,
 ) -> dict:
     """Use Playwright to launch a browser, get page data, and detect CF challenges."""
@@ -203,6 +235,9 @@ def fetch_page(
         if proxy_parts.password:
             proxy_config["password"] = proxy_parts.password
         context_options["proxy"] = proxy_config
+    
+    if user_agent:
+        context_options["user_agent"] = user_agent
 
     with sync_playwright() as playwright:
         with playwright.chromium.launch(headless=True) as browser:
@@ -281,25 +316,50 @@ if st.button("Go"):
     if not normalized_url:
         st.error("Silakan masukkan URL terlebih dahulu.")
     else:
-        final_proxy = proxy_input if proxy_input else None
-        
-        # Load cookies from UI
+        # --- Data Extraction from UI ---
         loaded_cookies = None
+        extracted_user_agent = None
+        extracted_proxy = None
+
+        raw_json_data = None
         # Give file uploader precedence
         if cookie_file:
             try:
-                loaded_cookies = json.load(cookie_file)
-                st.session_state.cookie_text = json.dumps(loaded_cookies, indent=2)
+                raw_json_data = json.load(cookie_file)
             except Exception as e:
                 st.error(f"Gagal membaca file cookie: {e}")
                 st.stop()
         elif cookie_json_text_input:
             try:
-                loaded_cookies = json.loads(cookie_json_text_input)
-                st.session_state.cookie_text = cookie_json_text_input
+                raw_json_data = json.loads(cookie_json_text_input)
             except json.JSONDecodeError:
                 st.error("JSON cookie di text area tidak valid.")
                 st.stop()
+
+        if raw_json_data:
+            if isinstance(raw_json_data, list):
+                # It's a simple list of cookies
+                loaded_cookies = raw_json_data
+            elif isinstance(raw_json_data, dict):
+                # It's the complex blob, so parse it
+                st.info("Parsing complex solver data blob...")
+                parsed_data = parse_solver_data_blob(raw_json_data)
+                loaded_cookies = parsed_data.get("cookies")
+                extracted_user_agent = parsed_data.get("user_agent")
+                extracted_proxy = parsed_data.get("proxy")
+            
+            # Update the text area to show the raw data that was used
+            st.session_state.cookie_text = json.dumps(raw_json_data, indent=2)
+
+        # --- Determine Final Settings ---
+        # Priority: 1. From blob, 2. From proxy UI, 3. None
+        final_proxy = extracted_proxy or (proxy_input if proxy_input else None)
+        final_user_agent = extracted_user_agent # Will be None if not in blob
+
+        if extracted_proxy:
+            st.info(f"Using proxy from cookie data: {final_proxy}")
+        if final_user_agent:
+            st.info(f"Using User Agent from cookie data.")
 
         # --- Main Orchestration Logic ---
         with st.spinner("Mengambil halaman..."):
@@ -309,6 +369,7 @@ if st.button("Go"):
                 get_html=get_html,
                 proxy=final_proxy,
                 cookies=loaded_cookies,
+                user_agent=final_user_agent,
             )
 
         if use_solver and result.get("status") == "cloudflare_challenge":
