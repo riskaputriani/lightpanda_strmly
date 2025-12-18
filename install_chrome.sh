@@ -28,8 +28,7 @@ PY
 mv chrome-linux64/* .
 rm -rf chrome-linux64 chrome-linux.zip
 
-
-chmod +x chrome
+chmod -R +x .
 
 echo "Chrome installed at $CHROME_BIN"
 "$CHROME_BIN" --version || true
