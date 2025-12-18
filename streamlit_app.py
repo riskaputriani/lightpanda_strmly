@@ -17,32 +17,32 @@ from components.url_utils import ensure_scheme
 st.set_page_config(page_title="Playwright URL Reader", layout="centered")
 init_session_state()
 
-st.title("Ambil Data dari URL dengan Playwright")
-st.caption("Tekan tombol 'Go' untuk mengambil data dari URL.")
+st.title("Fetch Data from URL with Playwright")
+st.caption("Click 'Go' to fetch data from a URL.")
 
 # --- Sidebar ---
-st.sidebar.header("Opsi")
-take_screenshot = st.sidebar.checkbox("Ambil screenshot", value=False)
+st.sidebar.header("Options")
+take_screenshot = st.sidebar.checkbox("Take screenshot", value=False)
 get_html = st.sidebar.checkbox("Get HTML", value=False)
-use_solver = st.sidebar.checkbox("Gunakan solver Cloudflare jika perlu", value=True)
+use_solver = st.sidebar.checkbox("Use Cloudflare solver if needed", value=True)
 
 st.sidebar.header("Proxy")
-proxy_input = st.sidebar.text_input("Proxy Address", value=st.session_state.proxy_address)
+proxy_input = st.sidebar.text_input("Proxy address", value=st.session_state.proxy_address)
 
 if st.sidebar.button("Cari proxy otomatis"):
-    with st.spinner("Mencari & menguji proxy..."):
+    with st.spinner("Searching & testing proxies..."):
         best_proxy = find_best_proxy()
         if best_proxy:
             st.session_state.proxy_address = best_proxy["proxy"]
             st.session_state.proxy_country = best_proxy["country"]
             st.rerun()
         else:
-            st.sidebar.error("Tidak ada proxy yang berfungsi ditemukan.")
+            st.sidebar.error("No working proxy found.")
             st.session_state.proxy_address = ""
             st.session_state.proxy_country = ""
 
 if st.session_state.proxy_country:
-    st.sidebar.info(f"Negara Proxy: {st.session_state.proxy_country}")
+    st.sidebar.info(f"Proxy country: {st.session_state.proxy_country}")
 
 st.sidebar.header("Overrides")
 user_agent_input = st.sidebar.text_input("User Agent", value=st.session_state.user_agent)
@@ -53,12 +53,12 @@ cookie_file = st.sidebar.file_uploader("Upload cookies.json", type=["json"])
 st.session_state.user_agent = user_agent_input
 
 # --- Main Page ---
-url_input = st.text_input("Masukkan URL yang ingin diambil datanya", value="")
+url_input = st.text_input("Enter URL to fetch", value="")
 
 if st.button("Go"):
     normalized_url = ensure_scheme(url_input)
     if not normalized_url:
-        st.error("Silakan masukkan URL terlebih dahulu.")
+        st.error("Please enter a URL first.")
     else:
         # --- Data Extraction from UI ---
         loaded_cookies = None
@@ -68,22 +68,20 @@ if st.button("Go"):
             try:
                 raw_json_data = json.load(cookie_file)
             except Exception as err:
-                st.error(f"Gagal membaca file cookie: {err}")
+                st.error(f"Failed to read cookie file: {err}")
                 st.stop()
         elif cookie_json_text_input:
             try:
                 raw_json_data = json.loads(cookie_json_text_input)
             except json.JSONDecodeError:
-                st.error("JSON cookie di text area tidak valid.")
+                st.error("Cookie JSON in text area is not valid.")
                 st.stop()
 
         if raw_json_data:
             if isinstance(raw_json_data, list):
                 loaded_cookies = raw_json_data
             else:
-                st.error(
-                    "Format cookie JSON tidak valid. Harus berupa array (daftar) objek cookie."
-                )
+                st.error("Cookie JSON format must be an array of cookie objects.")
                 st.stop()
 
             st.session_state.cookie_text = json.dumps(raw_json_data, indent=2)
@@ -93,7 +91,7 @@ if st.button("Go"):
         final_user_agent = user_agent_input if user_agent_input else None
 
         # --- Main Orchestration Logic ---
-        with st.spinner("Mengambil halaman..."):
+        with st.spinner("Fetching page..."):
             result = fetch_page(
                 normalized_url,
                 take_screenshot=take_screenshot,
@@ -114,7 +112,7 @@ if st.button("Go"):
                 solver_cookies = solver_result
 
             if not solver_cookies:
-                st.error("Cloudflare solver gagal mendapatkan cookies.")
+                st.error("Cloudflare solver failed to obtain cookies.")
                 st.stop()
 
             sanitized_cookies = sanitize_cookies(solver_cookies)
@@ -122,9 +120,9 @@ if st.button("Go"):
             if solver_user_agent:
                 st.session_state.user_agent = solver_user_agent
 
-            st.success("Solver berhasil mendapatkan cookies. Mengambil ulang halaman...")
+            st.success("Solver succeeded. Refetching page with solver cookies + UA...")
 
-            with st.spinner("Mengambil halaman..."):
+            with st.spinner("Fetching page..."):
                 result = fetch_page(
                     normalized_url,
                     take_screenshot=take_screenshot,
@@ -136,7 +134,7 @@ if st.button("Go"):
 
         # --- Display Results ---
         if result.get("status") == "ok":
-            st.success("Operasi Selesai!")
+            st.success("Done!")
             st.subheader("Title")
             st.code(result.get("title", "-"))
 
@@ -161,7 +159,7 @@ if st.button("Go"):
                 )
 
         elif result.get("status") == "cloudflare_challenge":
-            st.error("Gagal melewati Cloudflare. Coba aktifkan solver jika belum aktif.")
+            st.error("Failed to bypass Cloudflare. Enable solver and try again.")
 
         else:
-            st.error(f"Gagal mengambil halaman: {result.get('message', 'Unknown error')}")
+            st.error(f"Failed to fetch page: {result.get('message', 'Unknown error')}")

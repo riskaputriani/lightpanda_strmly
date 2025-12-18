@@ -25,8 +25,8 @@ except Exception:
 st.set_page_config(page_title="Scrape + AI Chat", layout="centered")
 init_session_state()
 
-st.title("Scrape + Tanya AI")
-st.caption("Ambil halaman (bisa lewat solver) lalu tanya apa saja lewat chat.")
+st.title("Scrape + Ask AI")
+st.caption("Fetch a page (optionally with solver) then ask anything via chat.")
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -40,46 +40,44 @@ def _load_cookies_from_inputs(file, text_value: str) -> Optional[List[dict]]:
 
     if raw_json_data:
         if not isinstance(raw_json_data, list):
-            raise ValueError(
-                "Format cookie JSON tidak valid. Harus berupa array (daftar) objek cookie."
-            )
+            raise ValueError("Cookie JSON must be an array of cookie objects.")
         return raw_json_data
     return None
 
 
 def _seed_system_message(title: str, html: Optional[str]) -> None:
     """Create a system prompt containing scraped content."""
-    snippet = (html or "")[:6000] if html else "HTML tidak diminta."
+    snippet = (html or "")[:6000] if html else "HTML not requested."
     context = (
-        "Kamu adalah asisten yang menjawab permintaan berdasarkan hasil scrape.\n"
-        f"Judul halaman: {title or '-'}\n"
-        f"Cuplikan HTML:\n{snippet}"
+        "You are an assistant answering based on scraped results.\n"
+        f"Page title: {title or '-'}\n"
+        f"HTML snippet:\n{snippet}"
     )
     st.session_state.ai_messages = [{"role": "system", "content": context}]
 
 
 def _get_openai_client() -> OpenAI:
     if OpenAI is None:
-        raise RuntimeError("Paket 'openai' belum terpasang. Install dulu untuk memakai chat.")
+        raise RuntimeError("The 'openai' package is not installed. Please install it to use chat.")
 
     api_key = st.session_state.get("ai_api_key") or os.getenv("OPENAI_API_KEY")
     base_url = st.session_state.get("ai_base_url") or os.getenv("OPENAI_BASE_URL")
 
     if not api_key:
-        raise RuntimeError("API key belum diisi. Set di form LLM settings.")
+        raise RuntimeError("API key is missing. Set it in the LLM settings.")
 
     return OpenAI(api_key=api_key, base_url=base_url or None)
 
 
 # --- Sidebar: scraping options -----------------------------------------------
 st.sidebar.header("Scraping Options")
-use_solver = st.sidebar.checkbox("Gunakan solver Cloudflare jika perlu", value=True)
-take_screenshot = st.sidebar.checkbox("Ambil screenshot", value=False)
+use_solver = st.sidebar.checkbox("Use Cloudflare solver if needed", value=True)
+take_screenshot = st.sidebar.checkbox("Take screenshot", value=False)
 get_html = st.sidebar.checkbox("Get HTML", value=True)
 
 st.sidebar.header("Proxy & Override")
-proxy_input = st.sidebar.text_input("Proxy Address", value=st.session_state.proxy_address)
-user_agent_input = st.sidebar.text_input("User Agent", value=st.session_state.user_agent)
+proxy_input = st.sidebar.text_input("Proxy address", value=st.session_state.proxy_address)
+user_agent_input = st.sidebar.text_input("User agent", value=st.session_state.user_agent)
 cookie_text_input = st.sidebar.text_area(
     "Cookies (JSON Array)", value=st.session_state.cookie_text, height=150
 )
@@ -90,13 +88,13 @@ st.session_state.proxy_address = proxy_input
 
 
 # --- Main layout -------------------------------------------------------------
-url_input = st.text_input("Masukkan URL", value="", placeholder="https://contoh.com/halaman")
+url_input = st.text_input("Enter URL", value="", placeholder="https://example.com/page")
 
 col_btn, col_status = st.columns([1, 2])
 if col_btn.button("Fetch & Seed Chat"):
     normalized_url = ensure_scheme(url_input)
     if not normalized_url:
-        st.error("Silakan masukkan URL terlebih dahulu.")
+        st.error("Please enter a URL first.")
         st.stop()
 
     # Parse cookies
@@ -104,7 +102,7 @@ if col_btn.button("Fetch & Seed Chat"):
     try:
         loaded_cookies = _load_cookies_from_inputs(cookie_file, cookie_text_input)
     except Exception as err:
-        st.error(f"Gagal membaca cookie: {err}")
+        st.error(f"Failed to read cookies: {err}")
         st.stop()
 
     if loaded_cookies:
@@ -113,7 +111,7 @@ if col_btn.button("Fetch & Seed Chat"):
     final_proxy = proxy_input or None
     final_user_agent = user_agent_input or None
 
-    with st.spinner("Mengambil halaman..."):
+    with st.spinner("Fetching page..."):
         result = fetch_page(
             normalized_url,
             take_screenshot=take_screenshot,
@@ -134,7 +132,7 @@ if col_btn.button("Fetch & Seed Chat"):
             solver_cookies = solver_result
 
         if not solver_cookies:
-            st.error("Cloudflare solver gagal mendapatkan cookies.")
+            st.error("Cloudflare solver failed to obtain cookies.")
             st.stop()
 
         sanitized = sanitize_cookies(solver_cookies)
@@ -142,8 +140,8 @@ if col_btn.button("Fetch & Seed Chat"):
         if solver_user_agent:
             st.session_state.user_agent = solver_user_agent
 
-        st.success("Solver berhasil. Mengambil ulang halaman dengan cookies + UA solver...")
-        with st.spinner("Mengambil ulang..."):
+        st.success("Solver succeeded. Refetching page with solver cookies + UA...")
+        with st.spinner("Refetching..."):
             result = fetch_page(
                 normalized_url,
                 take_screenshot=take_screenshot,
@@ -154,7 +152,7 @@ if col_btn.button("Fetch & Seed Chat"):
             )
 
     if result.get("status") != "ok":
-        st.error(f"Gagal mengambil halaman: {result.get('message', 'Unknown error')}")
+        st.error(f"Failed to fetch page: {result.get('message', 'Unknown error')}")
         st.stop()
 
     # Save scrape result
@@ -163,19 +161,19 @@ if col_btn.button("Fetch & Seed Chat"):
     st.session_state.ai_scraped_at = datetime.utcnow().isoformat()
 
     _seed_system_message(result.get("title", "-"), result.get("html"))
-    st.success("Scrape berhasil. Chat sudah disiapkan dengan konteks halaman ini.")
+    st.success("Scrape complete. Chat is seeded with this page context.")
 
 
 # --- Display last scrape summary --------------------------------------------
 if st.session_state.get("ai_scrape_result"):
     last = st.session_state.ai_scrape_result
     st.info(
-        f"Halaman terakhir: {st.session_state.get('ai_scraped_url', '-')}\n\n"
-        f"Judul: {last.get('title', '-')}\n"
-        f"Waktu scrape (UTC): {st.session_state.get('ai_scraped_at', '-')}"
+        f"Last page: {st.session_state.get('ai_scraped_url', '-')}\n\n"
+        f"Title: {last.get('title', '-')}\n"
+        f"Scrape time (UTC): {st.session_state.get('ai_scraped_at', '-')}"
     )
     if take_screenshot and "screenshot" in last:
-        st.image(last["screenshot"], caption="Screenshot (terakhir)")
+        st.image(last["screenshot"], caption="Last screenshot")
 
 
 # --- LLM settings ------------------------------------------------------------
@@ -186,12 +184,12 @@ st.session_state.ai_api_key = st.text_input(
     "API Key", type="password", value=st.session_state.get("ai_api_key", "")
 )
 st.session_state.ai_base_url = st.text_input(
-    "API Base URL (opsional, untuk Ollama/self-hosted)", value=st.session_state.get("ai_base_url", "")
+    "API Base URL (optional, e.g., for Ollama/self-hosted)", value=st.session_state.get("ai_base_url", "")
 )
 
 
 # --- Chat UI ----------------------------------------------------------------
-st.subheader("Chat dengan AI")
+st.subheader("Chat with AI")
 if "ai_messages" not in st.session_state:
     st.session_state.ai_messages = []
 
@@ -202,11 +200,11 @@ for msg in st.session_state.ai_messages:
         st.write(msg["content"])
 
 
-user_prompt = st.chat_input("Tulis pertanyaan atau instruksi terkait hasil scrape...")
+user_prompt = st.chat_input("Ask a question or instruction related to the scraped result...")
 
 if user_prompt:
     if not st.session_state.get("ai_scrape_result"):
-        st.error("Belum ada hasil scrape. Jalankan 'Fetch & Seed Chat' dulu.")
+        st.error("No scrape result yet. Run 'Fetch & Seed Chat' first.")
         st.stop()
 
     st.session_state.ai_messages.append({"role": "user", "content": user_prompt})
@@ -222,7 +220,7 @@ if user_prompt:
         )
         answer = response.choices[0].message.content
     except Exception as err:
-        answer = f"Gagal memanggil LLM: {err}"
+        answer = f"Failed to call LLM: {err}"
 
     st.session_state.ai_messages.append({"role": "assistant", "content": answer})
     with st.chat_message("assistant"):

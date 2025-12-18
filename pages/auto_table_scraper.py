@@ -31,7 +31,7 @@ init_session_state()
 
 st.title("Auto Table Scraper")
 st.caption(
-    "Masukkan URL, definisikan kolom + selector (XPath/CSS/JS), dan scrap baris berulang otomatis. Unduh JSON/CSV/Excel."
+    "Enter a URL, define columns + selectors (XPath/CSS/JS), and scrape repeating rows automatically. Download JSON/CSV/Excel."
 )
 
 
@@ -64,7 +64,7 @@ def _extract_value_with_mode(
     soup: BeautifulSoup,
     tree,
 ) -> str:
-    """Ambil nilai teks atau atribut."""
+    """Extract text or an attribute value."""
     try:
         if selector_type == "xpath":
             nodes = tree.xpath(selector)
@@ -155,15 +155,15 @@ def extract_with_mappings(
 # Sidebar options
 # --------------------------------------------------------------------------- #
 st.sidebar.header("Scraping Options")
-use_solver = st.sidebar.checkbox("Gunakan solver Cloudflare jika perlu", value=True)
+use_solver = st.sidebar.checkbox("Use Cloudflare solver if needed", value=True)
 get_html = True  # mandatory for mapping extraction
-take_screenshot = st.sidebar.checkbox("Ambil screenshot (opsional)", value=False)
+take_screenshot = st.sidebar.checkbox("Take screenshot (optional)", value=False)
 
 st.sidebar.header("Proxy & Overrides")
-proxy_input = st.sidebar.text_input("Proxy Address", value=st.session_state.proxy_address)
-user_agent_input = st.sidebar.text_input("User Agent", value=st.session_state.user_agent)
+proxy_input = st.sidebar.text_input("Proxy address", value=st.session_state.proxy_address)
+user_agent_input = st.sidebar.text_input("User agent", value=st.session_state.user_agent)
 cookie_text_input = st.sidebar.text_area(
-    "Cookies (JSON Array)", value=st.session_state.cookie_text, height=120
+    "Cookies (JSON array)", value=st.session_state.cookie_text, height=120
 )
 cookie_file = st.sidebar.file_uploader("Upload cookies.json", type=["json"])
 
@@ -174,9 +174,9 @@ st.session_state.proxy_address = proxy_input
 # --------------------------------------------------------------------------- #
 # Main form
 # --------------------------------------------------------------------------- #
-url_input = st.text_input("Masukkan URL", value="", placeholder="https://contoh.com/produk")
+url_input = st.text_input("URL", value="", placeholder="https://example.com/products")
 
-st.subheader("Kolom & Selector")
+st.subheader("Columns & Selectors")
 if "column_mappings" not in st.session_state:
     st.session_state.column_mappings = [
         {
@@ -195,12 +195,12 @@ if "repeat_type_shared" not in st.session_state:
 
 repeat_cols = st.columns(2)
 repeat_selector_shared = repeat_cols[0].text_input(
-    "Selector repeat (opsional, satu untuk semua kolom)",
+    "Repeat selector (optional, shared)",
     value=st.session_state.repeat_selector_shared,
-    help="Jika diisi, akan diulang dengan nth-child / {i} naik 1,2,3... sampai tidak ada hasil.",
+    help="If set, it iterates nth-child / {i} with 1,2,3... until no results.",
 )
 repeat_type_shared = repeat_cols[1].selectbox(
-    "Tipe selector repeat",
+    "Repeat selector type",
     options=["css", "xpath", "js"],
     index=["css", "xpath", "js"].index(st.session_state.repeat_type_shared),
 )
@@ -209,33 +209,33 @@ st.session_state.repeat_type_shared = repeat_type_shared
 
 new_mappings: List[Dict[str, str]] = []
 for idx, mapping in enumerate(st.session_state.column_mappings):
-    st.markdown(f"**Kolom {idx+1}**")
+    st.markdown(f"**Column {idx+1}**")
     col1, col2, col3 = st.columns(3)
-    name = col1.text_input("Nama kolom", value=mapping.get("name", f"col_{idx+1}"), key=f"name_{idx}")
+    name = col1.text_input("Column name", value=mapping.get("name", f"col_{idx+1}"), key=f"name_{idx}")
     selector_type = col2.selectbox(
-        "Tipe selector",
+        "Selector type",
         options=["css", "xpath", "js"],
         index=["css", "xpath", "js"].index(mapping.get("selector_type", "css")),
         key=f"type_{idx}",
     )
     selector = col3.text_input(
-        "Selector untuk nilai",
+        "Selector for value",
         value=mapping.get("selector", ""),
         key=f"selector_{idx}",
-        help="Gunakan nth-child(1) atau {i} untuk indeks berulang.",
+        help="Use nth-child(1) or {i} for repeated indices.",
     )
     val_col, attr_col = st.columns(2)
     value_mode = val_col.selectbox(
-        "Ambil apa?",
+        "Extract",
         options=["text", "attr"],
         index=["text", "attr"].index(mapping.get("value_mode", "text")),
         key=f"value_mode_{idx}",
     )
     attr_name = attr_col.text_input(
-        "Nama atribut (jika pilih attr)",
+        "Attribute name (when Extract = attr)",
         value=mapping.get("attr_name", ""),
         key=f"attr_name_{idx}",
-        help="Contoh: src, href, alt, data-id",
+        help="Examples: src, href, alt, data-id",
     )
     new_mappings.append(
         {
@@ -266,7 +266,7 @@ st.session_state.column_mappings = new_mappings
 if st.button("Extract Table"):
     normalized_url = ensure_scheme(url_input)
     if not normalized_url:
-        st.error("Silakan masukkan URL terlebih dahulu.")
+        st.error("Please enter a URL first.")
         st.stop()
 
     # Parse cookies
@@ -275,25 +275,25 @@ if st.button("Extract Table"):
         try:
             loaded_cookies = json.load(cookie_file)
         except Exception as err:
-            st.error(f"Gagal membaca file cookie: {err}")
+            st.error(f"Failed to read cookie file: {err}")
             st.stop()
     elif cookie_text_input:
         try:
             loaded_cookies = json.loads(cookie_text_input)
         except json.JSONDecodeError:
-            st.error("JSON cookie di text area tidak valid.")
+            st.error("Cookie JSON in text area is not valid.")
             st.stop()
 
     if loaded_cookies:
         if not isinstance(loaded_cookies, list):
-            st.error("Format cookie JSON tidak valid. Harus berupa array objek cookie.")
+            st.error("Cookie JSON format must be an array of cookie objects.")
             st.stop()
         st.session_state.cookie_text = json.dumps(loaded_cookies, indent=2)
 
     final_proxy = proxy_input or None
     final_user_agent = user_agent_input or None
 
-    with st.spinner("Mengambil halaman..."):
+    with st.spinner("Fetching page..."):
         result = fetch_page(
             normalized_url,
             take_screenshot=take_screenshot,
@@ -322,8 +322,8 @@ if st.button("Extract Table"):
         if solver_user_agent:
             st.session_state.user_agent = solver_user_agent
 
-        st.success("Solver berhasil. Mengambil ulang halaman dengan cookies + UA solver...")
-        with st.spinner("Mengambil ulang..."):
+        st.success("Solver succeeded. Refetching page with solver cookies + UA...")
+        with st.spinner("Refetching..."):
             result = fetch_page(
                 normalized_url,
                 take_screenshot=take_screenshot,
@@ -334,12 +334,12 @@ if st.button("Extract Table"):
             )
 
     if result.get("status") != "ok":
-        st.error(f"Gagal mengambil halaman: {result.get('message', 'Unknown error')}")
+        st.error(f"Failed to fetch page: {result.get('message', 'Unknown error')}")
         st.stop()
 
     html_content = result.get("html")
     if not html_content:
-        st.error("HTML tidak tersedia dari hasil fetch. Aktifkan Get HTML.")
+        st.error("HTML content is missing from fetch result. Ensure Get HTML is enabled.")
         st.stop()
 
     df = extract_with_mappings(
@@ -349,7 +349,7 @@ if st.button("Extract Table"):
         st.session_state.repeat_type_shared,
     )
     if df is None or df.empty:
-        st.error("Tidak menemukan data dengan mapping/selector yang diberikan. Periksa selector atau repeat.")
+        st.error("No data found with the provided mappings/selectors. Check selectors or repeat.")
         st.stop()
 
     # Persist extracted data so reruns (e.g., after download) still show the table
@@ -359,9 +359,8 @@ if st.button("Extract Table"):
 
     # Optional info
     st.info(
-        "Gunakan placeholder nth-child(1) atau {i} untuk selector yang berulang. "
-        "Selector repeat (satu untuk semua kolom) menentukan elemen list yang akan diiterasi hingga habis. "
-        "Setiap kolom bisa memilih ambil teks atau atribut tertentu."
+        "Use nth-child(1) or {i} for repeated indices. A single repeat selector drives the iteration. "
+        "Each column can extract text or a specific attribute."
     )
 
 
@@ -370,8 +369,24 @@ if st.button("Extract Table"):
 # --------------------------------------------------------------------------- #
 if st.session_state.get("extracted_records"):
     df_display = pd.DataFrame(st.session_state.extracted_records, columns=st.session_state.extracted_columns)
-    st.success(f"Data tersedia: {st.session_state.get('extracted_row_count', len(df_display))} baris.")
+    st.success(f"Data available: {st.session_state.get('extracted_row_count', len(df_display))} rows.")
     st.dataframe(df_display, width="stretch")
+
+    # Show image previews if there are image-like columns
+    image_cols = [
+        c for c in df_display.columns if "image" in c.lower() or any(
+            isinstance(v, str) and v.lower().startswith(("http://", "https://")) and v.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif"))
+            for v in df_display[c].head(3)
+        )
+    ]
+    if image_cols:
+        st.caption("Image preview (first 50 rows):")
+        for col in image_cols:
+            urls = [u for u in df_display[col].tolist() if isinstance(u, str) and u.strip()]
+            if not urls:
+                continue
+            st.write(f"**{col}**")
+            st.image(urls[:50], width=128)
 
     json_bytes = df_display.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
     csv_bytes = df_display.to_csv(index=False).encode("utf-8")
