@@ -29,7 +29,6 @@ if sys.platform == "win32":
 CHROME_DIR = Path.home() / ".local" / "chrome"
 CHROME_BIN = CHROME_DIR / "chrome"
 INSTALL_SCRIPT = Path(__file__).parent / "install_chrome.sh"
-CHROME_DEPS_LIB = CHROME_DIR / "deps" / "usr" / "lib" / "x86_64-linux-gnu"
 
 def ensure_chrome_installed() -> str:
     """
@@ -37,11 +36,6 @@ def ensure_chrome_installed() -> str:
     Returns the path to the Chrome binary.
     """
     if CHROME_BIN.exists():
-        # Ensure LD_LIBRARY_PATH picks up local deps if present
-        if CHROME_DEPS_LIB.exists():
-            os.environ["LD_LIBRARY_PATH"] = (
-                f"{CHROME_DEPS_LIB}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"
-            )
         return str(CHROME_BIN)
 
     subprocess.run(
@@ -219,30 +213,6 @@ def fetch_page(
     timeout: int = 30_000,
 ) -> dict:
     """Use Playwright to launch a browser, get page data, and detect CF challenges."""
-    chrome_path = get_chrome_path()
-    browser_env = os.environ.copy()
-    if CHROME_DEPS_LIB.exists():
-        browser_env["LD_LIBRARY_PATH"] = (
-            f"{CHROME_DEPS_LIB}{os.pathsep}{browser_env.get('LD_LIBRARY_PATH', '')}"
-        )
-
-    context_options = {}
-    if proxy:
-        proxy_parts = urlparse(proxy)
-        server = f"{proxy_parts.scheme}://{proxy_parts.hostname}"
-        if proxy_parts.port:
-            server += f":{proxy_parts.port}"
-        
-        proxy_config = {"server": server}
-        if proxy_parts.username:
-            proxy_config["username"] = proxy_parts.username
-        if proxy_parts.password:
-            proxy_config["password"] = proxy_parts.password
-        context_options["proxy"] = proxy_config
-    
-    if user_agent:
-        context_options["user_agent"] = user_agent
-
     with sync_playwright() as playwright:
         with playwright.chromium.launch(
             executable_path=chrome_path,
@@ -252,7 +222,6 @@ def fetch_page(
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
             ],
-            env=browser_env,
         ) as browser:
             context = browser.new_context(**context_options)
             if cookies:

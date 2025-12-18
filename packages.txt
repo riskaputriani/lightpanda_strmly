@@ -11,4 +11,8 @@ libxfixes3
 libxrandr2
 libgbm1
 libasound2
-dpkg
+libcairo2
+libpango-1.0-0
+libpangocairo-1.0-0
+libpangoft2-1.0-0
+libpixman-1-0

@@ -28,28 +28,8 @@ PY
 mv chrome-linux64/* .
 rm -rf chrome-linux64 chrome-linux.zip
 
-# Fetch minimal runtime deps (libcairo) into a local folder (no sudo).
-mkdir -p "$DEPS_DIR"
-curl -L -o "$DEPS_DIR/libcairo2.deb" \
-  https://deb.debian.org/debian/pool/main/c/cairo/libcairo2_1.16.0-5_amd64.deb
-
-# Pango runtime libs commonly required by Chrome headless
-curl -L -o "$DEPS_DIR/libpango-1.0-0.deb" \
-  https://deb.debian.org/debian/pool/main/p/pango1.0/libpango-1.0-0_1.50.12+ds-1_amd64.deb
-curl -L -o "$DEPS_DIR/libpangocairo-1.0-0.deb" \
-  https://deb.debian.org/debian/pool/main/p/pango1.0/libpangocairo-1.0-0_1.50.12+ds-1_amd64.deb
-curl -L -o "$DEPS_DIR/libpangoft2-1.0-0.deb" \
-  https://deb.debian.org/debian/pool/main/p/pango1.0/libpangoft2-1.0-0_1.50.12+ds-1_amd64.deb
-
-# Pixman dependency
-curl -L -o "$DEPS_DIR/libpixman-1-0.deb" \
-  https://deb.debian.org/debian/pool/main/p/pixman/libpixman-1-0_0.42.2-1_amd64.deb
-
-for deb in "$DEPS_DIR"/*.deb; do
-  dpkg-deb -x "$deb" "$DEPS_DIR"
-done
 
 chmod +x chrome
 
 echo "Chrome installed at $CHROME_BIN"
-LD_LIBRARY_PATH="$DEPS_DIR/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}" "$CHROME_BIN" --version || true
+"$CHROME_BIN" --version || true
