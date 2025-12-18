@@ -236,7 +236,33 @@ def _extract_by_xpath(html: str, xpath_expr: str) -> Optional[pd.DataFrame]:
     return pd.DataFrame(rows, columns=headers)
 
 
-def extract_tabular_data(html: str, xpath_filter: Optional[str] = None) -> Optional[pd.DataFrame]:
+def _extract_by_css(html: str, selector: str) -> Optional[pd.DataFrame]:
+    """Gunakan CSS selector untuk memilih elemen berulang (BeautifulSoup select)."""
+    if not selector.strip():
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    nodes = soup.select(selector)
+    if not nodes:
+        return None
+
+    rows_dicts = [_row_fields_from_tag(n) for n in nodes if isinstance(n, Tag)]
+    if not rows_dicts:
+        return None
+
+    headers_set = set()
+    for rd in rows_dicts:
+        headers_set.update(rd.keys())
+    headers = sorted(headers_set)
+    rows = [[rd.get(h, "") for h in headers] for rd in rows_dicts]
+    return pd.DataFrame(rows, columns=headers)
+
+
+def extract_tabular_data(
+    html: str,
+    xpath_filter: Optional[str] = None,
+    css_filter: Optional[str] = None,
+    js_filter: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
     """Kembalikan DataFrame dari tabel HTML atau blok elemen berulang."""
     soup = BeautifulSoup(html, "html.parser")
 
@@ -245,6 +271,18 @@ def extract_tabular_data(html: str, xpath_filter: Optional[str] = None) -> Optio
         df_xpath = _extract_by_xpath(html, xpath_filter)
         if df_xpath is not None and not df_xpath.empty:
             return df_xpath
+
+    # 0b) CSS selector
+    if css_filter:
+        df_css = _extract_by_css(html, css_filter)
+        if df_css is not None and not df_css.empty:
+            return df_css
+
+    # 0c) JS selector (treated same as CSS/querySelectorAll)
+    if js_filter:
+        df_js = _extract_by_css(html, js_filter)
+        if df_js is not None and not df_js.empty:
+            return df_js
 
     # 1) Coba tabel eksplisit
     table_result = _parse_html_table(soup)
@@ -295,7 +333,19 @@ xpath_input = st.text_input(
     "XPath (opsional) untuk memilih elemen berulang",
     value="",
     placeholder="//div[contains(@class,'product')]",
-    help="Jika diisi, akan dipakai terlebih dulu untuk menemukan list item (mis. //div[@class='row product']).",
+    help="Jika diisi, dipakai lebih dulu. Contoh: //div[@class='row product']",
+)
+css_input = st.text_input(
+    "CSS selector (opsional)",
+    value="",
+    placeholder=".row.product",
+    help="Dipakai jika XPath kosong. Contoh: .row.product",
+)
+js_input = st.text_input(
+    "JS selector (querySelectorAll, opsional)",
+    value="",
+    placeholder="div.row.product",
+    help="Dipakai jika XPath dan CSS kosong. Sama seperti querySelectorAll.",
 )
 
 if st.button("Extract Table"):
@@ -377,11 +427,20 @@ if st.button("Extract Table"):
         st.error("HTML tidak tersedia dari hasil fetch. Aktifkan Get HTML.")
         st.stop()
 
-    df = extract_tabular_data(html_content, xpath_filter=xpath_input.strip() or None)
+    df = extract_tabular_data(
+        html_content,
+        xpath_filter=xpath_input.strip() or None,
+        css_filter=css_input.strip() or None,
+        js_filter=js_input.strip() or None,
+    )
     if df is None or df.empty:
         msg = "Tidak menemukan struktur tabel atau blok elemen berulang yang dapat diubah menjadi tabel."
         if xpath_input.strip():
             msg += " XPath tidak menghasilkan data; coba kosongkan atau perbaiki ekspresi."
+        elif css_input.strip():
+            msg += " CSS selector tidak menghasilkan data; coba kosongkan atau perbaiki."
+        elif js_input.strip():
+            msg += " JS selector tidak menghasilkan data; coba kosongkan atau perbaiki."
         st.error(msg)
         st.stop()
 
@@ -407,6 +466,7 @@ if st.button("Extract Table"):
 
     # Optional info
     st.info(
-        "Urutan deteksi: (1) XPath jika diisi, (2) tabel HTML, (3) list <ul>/<ol>, "
-        "(4) parent dengan banyak child sejenis (kartu/list). Kolom dibuat dari gabungan field yang ditemukan."
+        "Urutan deteksi: (1) XPath (jika diisi), (2) CSS selector, (3) JS selector, "
+        "(4) tabel HTML, (5) list <ul>/<ol>, (6) parent dengan banyak child sejenis. "
+        "Kolom dibuat dari gabungan field yang ditemukan."
     )
