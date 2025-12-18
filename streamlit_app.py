@@ -10,8 +10,12 @@ from playwright.async_api import Error, async_playwright
 
 from src.setup import install_google_chrome
 
-# Ensure Google Chrome is present (especially on Streamlit Cloud/Linux).
+# Prefer system Chrome if available; otherwise fall back to Playwright's Chromium (user install).
 install_google_chrome()
+
+# Use a local, user-writable cache for Playwright browsers to avoid sudo/apt.
+PLAYWRIGHT_BROWSERS_DIR = Path(".pw-browsers").resolve()
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(PLAYWRIGHT_BROWSERS_DIR))
 
 
 @st.cache_resource
@@ -23,19 +27,16 @@ def get_chrome_executable_path() -> str | None:
 
 
 @st.cache_resource
-def ensure_playwright_chrome_installed() -> None:
+def ensure_playwright_chromium_installed() -> None:
     """
-    Install Playwright's Chrome channel into a local, user-writable folder.
-    Avoids sudo/apt so it works on non-root environments.
+    Install Playwright's bundled Chromium into a local folder (no sudo required).
     """
-    browsers_dir = Path(".pw-browsers").resolve()
     env = os.environ.copy()
-    env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(PLAYWRIGHT_BROWSERS_DIR)
 
     try:
         subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chrome"],
+            [sys.executable, "-m", "playwright", "install", "chromium"],
             check=True,
             capture_output=True,
             env=env,
@@ -44,8 +45,8 @@ def ensure_playwright_chrome_installed() -> None:
         stderr = exc.stderr.decode(errors="ignore").strip()
         message = stderr or str(exc)
         raise RuntimeError(
-            "Failed to install Playwright Chrome without sudo. "
-            "Try running: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chrome\n"
+            "Failed to install Playwright Chromium without sudo. "
+            "Try running: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium\n"
             f"Details: {message}"
         ) from exc
 
@@ -60,7 +61,8 @@ async def scrape_with_playwright(
     url: str, *, take_screenshot: bool, get_html: bool
 ) -> dict:
     """
-    Open the URL with Playwright + Chrome, then return the title plus optional assets.
+    Open the URL with Playwright (system Chrome if present, otherwise bundled Chromium),
+    then return the title plus optional assets.
     """
     results: dict = {}
     launch_kwargs = {"headless": True}
@@ -69,8 +71,7 @@ async def scrape_with_playwright(
     if chrome_path:
         launch_kwargs["executable_path"] = chrome_path
     else:
-        ensure_playwright_chrome_installed()
-        launch_kwargs["channel"] = "chrome"
+        ensure_playwright_chromium_installed()
 
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**launch_kwargs)
@@ -91,10 +92,10 @@ async def scrape_with_playwright(
     return results
 
 
-st.title("Playwright Chrome Scraper")
+st.title("Playwright Chrome/Chromium Scraper")
 st.caption(
-    "Enter a URL to fetch the page title with Playwright + Google Chrome, "
-    "optionally including a full-page screenshot and HTML."
+    "Enter a URL to fetch the page title with Playwright using system Chrome if available, "
+    "otherwise a bundled Chromium; optional full-page screenshot and HTML."
 )
 
 url_input = st.text_input("URL to scrape", placeholder="https://example.com")
@@ -106,7 +107,7 @@ if st.button("Scrape"):
         st.warning("Please enter a URL.")
     else:
         target_url = _normalize_url(url_input.strip())
-        with st.spinner("Working with Playwright + Google Chrome..."):
+        with st.spinner("Working with Playwright (Chrome/Chromium)..."):
             try:
                 results = asyncio.run(
                     scrape_with_playwright(
@@ -117,9 +118,10 @@ if st.button("Scrape"):
                 )
             except Error as exc:
                 st.error(
-                    "Playwright failed to launch Chrome. "
-                    "We tried to auto-install the Playwright Chrome channel. "
-                    "If it persists, run `python -m playwright install chrome` manually. "
+                    "Playwright failed to launch Chromium/Chrome. "
+                    "We tried to auto-install Playwright's bundled Chromium without sudo. "
+                    "If it persists, run "
+                    "`PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium` manually. "
                     f"Details: {exc}"
                 )
             except RuntimeError as exc:

@@ -1,6 +1,6 @@
-## Playwright + Google Chrome + Streamlit
+## Playwright + Chrome/Chromium + Streamlit
 
-A minimal Streamlit UI that uses **Playwright** with **Google Chrome** to:
+A minimal Streamlit UI that uses **Playwright** with **Google Chrome** (if available) or the bundled **Chromium** to:
 - Scrape the page **title** of any URL you enter.
 - (Optional) take a full-page **screenshot**.
 - (Optional) download the page **HTML**.
@@ -13,10 +13,10 @@ A minimal Streamlit UI that uses **Playwright** with **Google Chrome** to:
 pip install -r requirements.txt
 ```
 
-2) Install the Chrome browser for Playwright (first run only):
+2) Install the Playwright-managed Chromium browser (first run only, no sudo):
 
 ```bash
-python -m playwright install chrome
+PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium
 ```
 
 3) Run Streamlit:
@@ -27,7 +27,7 @@ streamlit run streamlit_app.py
 
 ### Notes
 
-- On Streamlit Cloud/Linux, `install_google_chrome()` ensures Google Chrome is present. Locally, make sure Chrome is installed or Playwright's `chrome` channel is available.
+- On Streamlit Cloud/Linux, `install_google_chrome()` tries to use system Chrome; if not available, the app relies on Playwright's bundled Chromium.
 - The app always opens pages headlessly via Playwright and returns the title. Checkboxes let you also fetch a screenshot and/or HTML.
-- On non-root Linux environments where `apt` is unavailable, the Chrome install step is skipped; the app will fall back to Playwright's bundled Chrome channel (ensure `python -m playwright install chrome` has been run).
-- If you cannot install system Chrome, you can download the Playwright-managed Chrome into a local folder (no sudo) with: `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chrome`.
+- On non-root Linux environments where `apt` is unavailable, the system Chrome install step is skipped; the app falls back to Playwright's bundled Chromium (ensure `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium` has been run).
+- If you cannot install system Chrome, download the Playwright-managed Chromium into a local folder (no sudo) with: `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium`.
