@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import random
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -69,6 +70,9 @@ class CloudflareSolver:
         Enable or disable headless mode for the browser (standalone mode only).
     proxy : Optional[str]
         The proxy server URL to use for the browser requests (standalone mode only).
+    no_sandbox : Optional[bool]
+        Force Chrome to run with --no-sandbox (useful when running as root). If not provided,
+        it is automatically enabled when the process runs as root.
     """
 
     def __init__(
@@ -82,6 +86,7 @@ class CloudflareSolver:
         headless: bool = True,
         proxy: Optional[str] = None,
         browser_executable_path: Optional[str] = None,
+        no_sandbox: Optional[bool] = None,
     ) -> None:
         self.cdp_url = cdp_url
         self.user_agent = user_agent
@@ -93,6 +98,7 @@ class CloudflareSolver:
         self.browser_executable_path = browser_executable_path
         self.driver = None
         self._standalone_mode = cdp_url is None
+        self.no_sandbox = no_sandbox
 
     async def __aenter__(self) -> CloudflareSolver:
         if self._standalone_mode:
@@ -110,6 +116,11 @@ class CloudflareSolver:
 
             if not self.http3:
                 config.add_argument("--disable-quic")
+
+            running_as_root = hasattr(os, "geteuid") and os.geteuid() == 0
+            if self.no_sandbox or running_as_root:
+                config.add_argument("--no-sandbox")
+                config.add_argument("--disable-setuid-sandbox")
 
             auth_proxy = SeleniumAuthenticatedProxy(self.proxy)
             auth_proxy.enrich_chrome_options(config)
@@ -382,6 +393,12 @@ async def main() -> None:
     )
 
     parser.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        help="Add --no-sandbox and --disable-setuid-sandbox to Chrome (useful when running as root)",
+    )
+
+    parser.add_argument(
         "-ac",
         "--all-cookies",
         action="store_true",
@@ -444,6 +461,7 @@ async def main() -> None:
             headless=not args.headed,
             proxy=args.proxy,
             browser_executable_path=args.browser_executable_path,
+            no_sandbox=args.no_sandbox,
         ) as solver:
             logging.info("Going to %s...", args.url)
 
