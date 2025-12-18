@@ -1,204 +1,112 @@
 import asyncio
 import os
 import platform
-import shutil
 import subprocess
 import sys
-import urllib.request
+import tempfile
 from pathlib import Path
 
 import streamlit as st
-from playwright.async_api import Error, async_playwright
-
-from src.setup import install_google_chrome
-
-# Prefer system Chrome if available; otherwise fall back to Playwright's Chromium (user install).
-install_google_chrome()
-
-# Use a local, user-writable cache for Playwright browsers to avoid sudo/apt.
-PLAYWRIGHT_BROWSERS_DIR = Path(".pw-browsers").resolve()
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(PLAYWRIGHT_BROWSERS_DIR))
-LOCAL_LIB_DIR = Path(".pw-libs").resolve()
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 
-@st.cache_resource
-def get_chrome_executable_path() -> str | None:
-    """
-    Return the path to a Chrome binary if available.
-    """
-    return shutil.which("google-chrome") or shutil.which("chrome")
-
-
-@st.cache_resource
-def ensure_playwright_chromium_installed() -> None:
-    """
-    Install Playwright's bundled Chromium into a local folder (no sudo required).
-    """
-    env = os.environ.copy()
-    env["PLAYWRIGHT_BROWSERS_PATH"] = str(PLAYWRIGHT_BROWSERS_DIR)
-
+if sys.platform == "win32":
     try:
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            check=True,
-            capture_output=True,
-            env=env,
-        )
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except RuntimeError:
+        pass
+
+
+_BROWSER_INSTALL_MARKER = Path(tempfile.gettempdir()) / "playwright-chromium-installed.marker"
+
+
+def ensure_playwright_browsers_installed() -> None:
+    """Run a one-time Playwright install so future launches find the Chromium executable."""
+    if _BROWSER_INSTALL_MARKER.exists():
+        return
+
+    command = [sys.executable, "-m", "playwright", "install", "chromium"]
+    try:
+        subprocess.run(command, check=True)
     except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode(errors="ignore").strip()
-        message = stderr or str(exc)
-        raise RuntimeError(
-            "Failed to install Playwright Chromium without sudo. "
-            "Try running: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium\n"
-            f"Details: {message}"
+        raise PlaywrightError(
+            "Unable to install Chromium automatically. "
+            "Run `python -m playwright install chromium` and retry."
         ) from exc
+    _BROWSER_INSTALL_MARKER.write_text("installed")
 
 
-def _normalize_url(url: str) -> str:
-    if url.startswith(("http://", "https://")):
-        return url
-    return f"https://{url}"
+def _ensure_scheme(value: str) -> str:
+    """Add a default scheme when the provided URL is missing one."""
+    trimmed = value.strip()
+    if trimmed and not trimmed.startswith(("http://", "https://")):
+        return f"https://{trimmed}"
+    return trimmed
 
 
-def _ensure_local_nspr_nss() -> Path | None:
-    """
-    On minimal Linux images, Playwright's Chromium may miss libnspr4/libnss3.
-    Download and extract those libs into a local directory (no sudo) and return the lib path.
-    """
-    if platform.system() != "Linux":
-        return None
+def fetch_title_from_url(url: str, timeout: int = 30_000) -> str:
+    """Use Playwright to launch a local Chromium browser and return the title."""
+    ensure_playwright_browsers_installed()
+    with sync_playwright() as playwright:
+        with playwright.chromium.launch(headless=True) as browser:
+            page = browser.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            return page.title()
 
-    target_lib = LOCAL_LIB_DIR / "usr" / "lib" / "x86_64-linux-gnu"
-    if (target_lib / "libnspr4.so").exists():
-        return target_lib
 
-    LOCAL_LIB_DIR.mkdir(parents=True, exist_ok=True)
-
-    deb_urls = [
-        # Versions compatible with Debian/Ubuntu-like images; adjust if URLs break.
-        "https://deb.debian.org/debian/pool/main/n/nspr/libnspr4_4.35-1_amd64.deb",
-        "https://deb.debian.org/debian/pool/main/n/nss/libnss3_3.101-1_amd64.deb",
+def _system_info_text() -> str:
+    """Return a text summary similar to the provided console script."""
+    parts = [
+        "\n=== SYSTEM INFO ===",
+        f"OS          : {platform.system()} {platform.release()}",
+        f"Kernel      : {platform.version()}",
+        f"Machine     : {platform.machine()}",
+        f"Platform    : {platform.platform()}",
+        "",
+        "=== PYTHON INFO ===",
+        f"Python      : {sys.version.replace('\\n', ' ')}",
+        f"Build       : {platform.python_build()}",
+        f"Compiler    : {platform.python_compiler()}",
+        "",
+        "=== ENVIRONMENT ===",
+        f"os.name     : {os.name}",
+        f"USER        : {os.environ.get('USER')}",
+        f"HOME        : {os.environ.get('HOME')}",
+        "",
+        "=== SPECIAL CHECKS ===",
+        f"Docker?     : {os.path.exists('/.dockerenv')}",
+        f"WSL?        : {'microsoft' in platform.release().lower()}",
+        f"Alpine?     : {'alpine' in platform.platform().lower()}",
     ]
-
-    for url in deb_urls:
-        deb_path = LOCAL_LIB_DIR / Path(url).name
-        try:
-            if not deb_path.exists():
-                urllib.request.urlretrieve(url, deb_path)
-            subprocess.run(
-                ["dpkg-deb", "-x", str(deb_path), str(LOCAL_LIB_DIR)],
-                check=True,
-                capture_output=True,
-            )
-        except Exception:
-            # If we cannot fetch/extract, leave and rely on higher-level error handling.
-            return None
-
-    if (target_lib / "libnspr4.so").exists():
-        return target_lib
-
-    return None
+    return "\n".join(parts)
 
 
-async def scrape_with_playwright(
-    url: str, *, take_screenshot: bool, get_html: bool
-) -> dict:
-    """
-    Open the URL with Playwright (system Chrome if present, otherwise bundled Chromium),
-    then return the title plus optional assets.
-    """
-    results: dict = {}
-    launch_kwargs = {"headless": True}
-    chrome_path = get_chrome_executable_path()
+st.set_page_config(page_title="Playwright Title Reader", layout="centered")
+st.title("Ambil Title dari URL dengan Playwright")
+st.caption("Tekan tombol agar Playwright meluncurkan Chromium lokal dan membaca judul.")
 
-    if chrome_path:
-        launch_kwargs["executable_path"] = chrome_path
-    else:
-        ensure_playwright_chromium_installed()
-
-    browser_env = os.environ.copy()
-    extra_lib_path = _ensure_local_nspr_nss()
-    if extra_lib_path:
-        current_ld = browser_env.get("LD_LIBRARY_PATH", "")
-        browser_env["LD_LIBRARY_PATH"] = (
-            f"{extra_lib_path}:{current_ld}" if current_ld else f"{extra_lib_path}"
-        )
-
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(**launch_kwargs, env=browser_env)
-        page = await browser.new_page()
-
-        try:
-            await page.goto(url, wait_until="domcontentloaded")
-            results["title"] = await page.title()
-
-            if take_screenshot:
-                results["screenshot"] = await page.screenshot(full_page=True)
-
-            if get_html:
-                results["html"] = await page.content()
-        finally:
-            await browser.close()
-
-    return results
-
-
-st.title("Playwright Chrome/Chromium Scraper")
+st.subheader("Playwright Local Browser")
 st.caption(
-    "Enter a URL to fetch the page title with Playwright using system Chrome if available, "
-    "otherwise a bundled Chromium; optional full-page screenshot and HTML."
+    "Playwright akan mencoba menjalankan `python -m playwright install chromium` sekali "
+    "per runtime, tapi jalankan manual selama pengembangan agar startup lebih cepat."
 )
+st.markdown("---")
 
-url_input = st.text_input("URL to scrape", placeholder="https://example.com")
-take_screenshot = st.checkbox("Capture screenshot (full page)")
-get_html = st.checkbox("Fetch HTML")
+with st.expander("Info Sistem"):
+    st.code(_system_info_text(), language="text")
+st.markdown("---")
 
-if st.button("Scrape"):
-    if not url_input:
-        st.warning("Please enter a URL.")
+url_input = st.text_input("Masukkan URL yang ingin diambil judulnya", value="")
+
+if st.button("Dapatkan Title"):
+    normalized_url = _ensure_scheme(url_input)
+    if not normalized_url:
+        st.error("Silakan masukkan URL terlebih dahulu.")
     else:
-        target_url = _normalize_url(url_input.strip())
-        with st.spinner("Working with Playwright (Chrome/Chromium)..."):
+        with st.spinner("Memuat dan membaca title..."):
             try:
-                results = asyncio.run(
-                    scrape_with_playwright(
-                        target_url,
-                        take_screenshot=take_screenshot,
-                        get_html=get_html,
-                    )
-                )
-            except Error as exc:
-                st.error(
-                    "Playwright failed to launch Chromium/Chrome. "
-                    "We tried to auto-install Playwright's bundled Chromium without sudo. "
-                    "If it persists, run "
-                    "`PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium` manually. "
-                    f"Details: {exc}"
-                )
-            except RuntimeError as exc:
-                st.error(str(exc))
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Scrape failed: {exc}")
-            else:
-                st.subheader("Title")
-                st.write(results.get("title", "-"))
-
-                if take_screenshot and "screenshot" in results:
-                    st.subheader("Screenshot")
-                    st.image(results["screenshot"])
-                    st.download_button(
-                        "Download screenshot",
-                        data=results["screenshot"],
-                        file_name="screenshot.png",
-                        mime="image/png",
-                    )
-
-                if get_html and "html" in results:
-                    st.subheader("HTML")
-                    st.code(results["html"], language="html")
-                    st.download_button(
-                        "Download HTML",
-                        data=results["html"],
-                        file_name="page.html",
-                        mime="text/html",
-                    )
+                title = fetch_title_from_url(normalized_url)
+                st.success("Title ditemukan:")
+                st.code(title)
+            except PlaywrightError as exc:
+                st.error(f"Gagal mengambil title: {exc}")
