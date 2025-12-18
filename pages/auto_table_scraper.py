@@ -211,7 +211,7 @@ if st.button("Tambah kolom"):
             "repeat_selector": "",
         }
     )
-    st.experimental_rerun()
+    st.rerun()
 
 # Persist updated mappings
 st.session_state.column_mappings = new_mappings
