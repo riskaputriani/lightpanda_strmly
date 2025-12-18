@@ -31,7 +31,6 @@ CHROME_BIN = CHROME_DIR / "chrome"
 INSTALL_SCRIPT = Path(__file__).parent / "install_chrome.sh"
 CHROME_DEPS_LIB = CHROME_DIR / "deps" / "usr" / "lib" / "x86_64-linux-gnu"
 
-
 def ensure_chrome_installed() -> str:
     """
     Ensure Chrome binary is available under ~/.local/chrome using the provided install script.

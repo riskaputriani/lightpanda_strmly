@@ -15,7 +15,7 @@ cd "$CHROME_DIR"
 
 echo "Downloading Google Chrome Stable..."
 curl -L -o chrome-linux.zip \
-  https://storage.googleapis.com/chrome-for-testing-public/$(curl -s https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE)/linux64/chrome-linux64.zip
+  https://storage.googleapis.com/chrome-for-testing-public/$$(curl -s https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE)/linux64/chrome-linux64.zip
 
 # Extract using Python's zipfile (avoids needing system unzip)
 python - <<'PY'
@@ -40,6 +40,10 @@ curl -L -o "$DEPS_DIR/libpangocairo-1.0-0.deb" \
   https://deb.debian.org/debian/pool/main/p/pango1.0/libpangocairo-1.0-0_1.50.12+ds-1_amd64.deb
 curl -L -o "$DEPS_DIR/libpangoft2-1.0-0.deb" \
   https://deb.debian.org/debian/pool/main/p/pango1.0/libpangoft2-1.0-0_1.50.12+ds-1_amd64.deb
+
+# Pixman dependency
+curl -L -o "$DEPS_DIR/libpixman-1-0.deb" \
+  https://deb.debian.org/debian/pool/main/p/pixman/libpixman-1-0_0.42.2-1_amd64.deb
 
 for deb in "$DEPS_DIR"/*.deb; do
   dpkg-deb -x "$deb" "$DEPS_DIR"
