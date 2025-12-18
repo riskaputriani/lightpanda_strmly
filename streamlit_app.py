@@ -29,6 +29,7 @@ if sys.platform == "win32":
 CHROME_DIR = Path.home() / ".local" / "chrome"
 CHROME_BIN = CHROME_DIR / "chrome"
 INSTALL_SCRIPT = Path(__file__).parent / "install_chrome.sh"
+CHROME_DEPS_LIB = CHROME_DIR / "deps" / "usr" / "lib" / "x86_64-linux-gnu"
 
 
 def ensure_chrome_installed() -> str:
@@ -37,6 +38,11 @@ def ensure_chrome_installed() -> str:
     Returns the path to the Chrome binary.
     """
     if CHROME_BIN.exists():
+        # Ensure LD_LIBRARY_PATH picks up local deps if present
+        if CHROME_DEPS_LIB.exists():
+            os.environ["LD_LIBRARY_PATH"] = (
+                f"{CHROME_DEPS_LIB}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"
+            )
         return str(CHROME_BIN)
 
     subprocess.run(
@@ -47,6 +53,11 @@ def ensure_chrome_installed() -> str:
 
     if not CHROME_BIN.exists():
         raise PlaywrightError("Chrome installation failed; chrome binary not found.")
+
+    if CHROME_DEPS_LIB.exists():
+        os.environ["LD_LIBRARY_PATH"] = (
+            f"{CHROME_DEPS_LIB}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"
+        )
 
     return str(CHROME_BIN)
 
@@ -210,6 +221,11 @@ def fetch_page(
 ) -> dict:
     """Use Playwright to launch a browser, get page data, and detect CF challenges."""
     chrome_path = get_chrome_path()
+    browser_env = os.environ.copy()
+    if CHROME_DEPS_LIB.exists():
+        browser_env["LD_LIBRARY_PATH"] = (
+            f"{CHROME_DEPS_LIB}{os.pathsep}{browser_env.get('LD_LIBRARY_PATH', '')}"
+        )
 
     context_options = {}
     if proxy:
@@ -237,6 +253,7 @@ def fetch_page(
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
             ],
+            env=browser_env,
         ) as browser:
             context = browser.new_context(**context_options)
             if cookies:
