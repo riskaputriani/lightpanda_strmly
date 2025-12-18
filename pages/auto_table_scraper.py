@@ -1,7 +1,7 @@
 import json
 from collections import defaultdict
 from io import BytesIO
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 
@@ -113,58 +113,87 @@ def _extract_repeating_blocks(
     soup: BeautifulSoup,
 ) -> Optional[Tuple[List[str], List[List[str]]]]:
     """
-    Deteksi elemen berulang berdasarkan kombinasi tag + class, atau parent dengan
-    banyak child sejenis. Ambil teksnya saja.
+    Deteksi elemen berulang berbasis struktur kartu/list:
+    - Pilih parent yang memiliki banyak anak dengan tag+class sama.
+    - Jatuhkan ke elemen anak itu sebagai baris.
     """
-    buckets: defaultdict[Tuple[str, Tuple[str, ...]], List[Tag]] = defaultdict(list)
-    for el in soup.find_all(True):
-        buckets[_signature(el)].append(el)  # kumpulkan semua elemen dengan signature sama
+    best_children: List[Tag] = []
+    best_sig: Optional[Tuple[str, Tuple[str, ...]]] = None
+    best_score = 0
 
-    # Tambahkan kandidat dari parent dengan banyak child sejenis (mis. daftar kartu)
     for parent in soup.find_all(True):
         children = [c for c in parent.find_all(recursive=False) if isinstance(c, Tag)]
         if len(children) < 3:
             continue
-        first_sig = _signature(children[0])
-        if all(_signature(c) == first_sig for c in children):
-            buckets[first_sig].extend(children)
-
-    candidates = []
-    for sig, elements in buckets.items():
-        if len(elements) < 3:
+        sig = _signature(children[0])
+        if not all(_signature(c) == sig for c in children):
             continue
-        texts = [" ".join(e.stripped_strings) for e in elements]
-        avg_len = sum(len(t) for t in texts) / len(texts)
-        if avg_len < 10:  # skip blok yang terlalu pendek
-            continue
-        candidates.append((len(elements), avg_len, sig, elements))
 
-    if not candidates:
+        # score: banyaknya anak * panjang teks rata-rata
+        texts = [" ".join(c.stripped_strings) for c in children]
+        avg_len = sum(len(t) for t in texts) / len(texts) if texts else 0
+        score = len(children) * (avg_len + 1)
+        if score > best_score:
+            best_children = children
+            best_sig = sig
+            best_score = score
+
+    if not best_children:
         return None
 
-    # pilih kandidat dengan jumlah elemen terbanyak, lalu rata-rata teks terpanjang
-    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    _, _, _, elements = candidates[0]
+    def _row_fields(el: Tag) -> Dict[str, str]:
+        """Ambil field terstruktur dari kartu/list."""
+        fields: Dict[str, str] = {}
 
-    rows_text: List[List[str]] = []
-    max_fields = 0
-    for el in elements:
-        parts = [p for p in el.stripped_strings if p]
-        if not parts:
-            continue
-        rows_text.append(parts)
-        max_fields = max(max_fields, len(parts))
+        # Gambar
+        img = el.find("img")
+        if img and img.get("src"):
+            fields["image"] = img["src"]
+        if img and img.get("alt"):
+            fields["image_alt"] = img["alt"]
 
-    if not rows_text:
-        return None
+        # Judul dan url produk
+        h = el.find(["h1", "h2", "h3", "h4"])
+        if h:
+            fields["title"] = h.get_text(" ", strip=True)
+            link = h.find("a")
+            if link and link.get("href"):
+                fields["url_product"] = link["href"]
+        else:
+            link = el.find("a")
+            if link and link.get_text(strip=True):
+                fields["title"] = link.get_text(" ", strip=True)
+            if link and link.get("href"):
+                fields["url_product"] = link["href"]
 
-    headers = [f"col_{i+1}" for i in range(max_fields)]
-    normalized_rows: List[List[str]] = []
-    for row in rows_text:
-        padded = row + [""] * (max_fields - len(row))
-        normalized_rows.append(padded[:max_fields])
+        # Harga
+        price_node = el.find(class_="price")
+        if price_node and price_node.get_text(strip=True):
+            fields["price"] = price_node.get_text(strip=True)
 
-    return headers, normalized_rows
+        # Short description
+        short_desc = el.find(class_="short-description")
+        if short_desc:
+            fields["short_description"] = short_desc.get_text(" ", strip=True)
+
+        # Fallback teks gabungan
+        if "title" not in fields:
+            fields["title"] = el.get_text(" ", strip=True)[:200]
+
+        return fields
+
+    rows_dicts = [_row_fields(c) for c in best_children]
+    # Buat header union
+    headers_set = set()
+    for rd in rows_dicts:
+        headers_set.update(rd.keys())
+    headers = sorted(headers_set)
+
+    rows: List[List[str]] = []
+    for rd in rows_dicts:
+        rows.append([rd.get(h, "") for h in headers])
+
+    return headers, rows
 
 
 def extract_tabular_data(html: str) -> Optional[pd.DataFrame]:
