@@ -211,12 +211,18 @@ class CloudflareSolver:
             brands=[
                 UserAgentBrandVersion(brand="Not)A;Brand", version="8"),
                 UserAgentBrandVersion(
+                    brand="Chromium", version=str(device.browser.version[0])
+                ),
+                UserAgentBrandVersion(
                     brand="Google Chrome",
                     version=str(device.browser.version[0]),
                 ),
             ],
             full_version_list=[
                 UserAgentBrandVersion(brand="Not)A;Brand", version="8"),
+                UserAgentBrandVersion(
+                    brand="Chromium", version=str(device.browser.version[0])
+                ),
                 UserAgentBrandVersion(
                     brand="Google Chrome",
                     version=str(device.browser.version[0]),
