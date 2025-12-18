@@ -59,10 +59,12 @@ def fetch_page(
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout)
 
-                if "Just a moment..." in page.title():
+                page_title = page.title().strip()
+                lower_title = page_title.lower()
+                if "just a moment" in lower_title or lower_title.startswith("challenge"):
                     return {"status": "cloudflare_challenge"}
 
-                result: Dict[str, object] = {"status": "ok", "title": page.title()}
+                result: Dict[str, object] = {"status": "ok", "title": page_title}
                 if take_screenshot:
                     result["screenshot"] = page.screenshot(full_page=True)
                 if get_html:
@@ -72,4 +74,3 @@ def fetch_page(
 
             except PlaywrightError as err:
                 return {"status": "error", "message": str(err)}
-
