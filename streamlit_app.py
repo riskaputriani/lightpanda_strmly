@@ -163,6 +163,9 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
                 clearance_cookie = solver.extract_clearance_cookie(current_cookies)
 
                 if clearance_cookie is None:
+                    # Set the full user agent metadata, just like the CLI version does.
+                    await solver.set_user_agent_metadata(await solver.get_user_agent())
+                    
                     challenge_platform = await solver.detect_challenge()
                     if challenge_platform:
                         st.info(f"Detected Cloudflare {challenge_platform.value} challenge. Solving...")
