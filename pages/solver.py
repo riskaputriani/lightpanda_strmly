@@ -25,46 +25,6 @@ from zendriver.core.element import Element
 import os
 from pathlib import Path
 
-def _iter_playwright_browser_roots() -> List[Path]:
-    """
-    Return likely locations where Playwright stores downloaded browsers.
-    """
-    roots: List[Path] = []
-    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-    if env_path:
-        roots.append(Path(env_path))
-
-    home = Path.home()
-    roots.extend(
-        [
-            home / ".cache" / "ms-playwright",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright",
-            home / "Library" / "Caches" / "ms-playwright",
-        ]
-    )
-    return [p for p in roots if p]
-
-
-def find_playwright_chromium_executable() -> Optional[str]:
-    """
-    Try to locate a Playwright-managed Chromium executable.
-    """
-    platform_paths = [
-        ("chrome-linux", "chrome"),
-        ("chrome-win", "chrome.exe"),
-        ("chrome-mac", "Chromium.app/Contents/MacOS/Chromium"),
-    ]
-
-    for root in _iter_playwright_browser_roots():
-        if not root.exists():
-            continue
-        for chromium_dir in sorted(root.glob("chromium-*"), reverse=True):
-            for platform_dir, exe_name in platform_paths:
-                candidate = chromium_dir / platform_dir / exe_name
-                if candidate.exists():
-                    return str(candidate)
-    return None
-
 def get_chrome_user_agent() -> str:
     """
     Get a random up-to-date Chrome user agent string.
@@ -123,6 +83,7 @@ class CloudflareSolver:
         http3: bool = True,
         headless: bool = True,
         proxy: Optional[str] = None,
+        browser_executable_path: Optional[str] = None,
     ) -> None:
         self.cdp_url = cdp_url
         self.user_agent = user_agent
@@ -131,14 +92,14 @@ class CloudflareSolver:
         self.http3 = http3
         self.headless = headless
         self.proxy = proxy
+        self.browser_executable_path = browser_executable_path
         self.driver = None
         self._standalone_mode = cdp_url is None
 
     async def __aenter__(self) -> CloudflareSolver:
         if self._standalone_mode:
             # Standalone mode: launch new browser
-            browser_executable_path = find_playwright_chromium_executable()
-            config = zendriver.Config(headless=self.headless, browser_executable_path=browser_executable_path)
+            config = zendriver.Config(headless=self.headless, browser_executable_path=self.browser_executable_path)
 
             if self.user_agent is not None:
                 config.add_argument(f"--user-agent={self.user_agent}")
@@ -337,13 +298,17 @@ class CloudflareSolver:
                 pass
 
 
+from chrome_installer import ensure_chrome_installed
+
 async def solve_cloudflare_challenge(url: str, proxy: str | None = None):
     user_agent = get_chrome_user_agent()
+    browser_executable_path = ensure_chrome_installed()
     async with CloudflareSolver(
         cdp_url=None,
         user_agent=user_agent,
         timeout=30,
         proxy=proxy,
+        browser_executable_path=browser_executable_path,
     ) as solver:
         await solver.driver.get(url)
         all_cookies = await solver.get_cookies()

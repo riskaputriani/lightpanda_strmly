@@ -17,36 +17,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 # Add src directory to path to allow import of cf_solver
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from cf_solver.solver_zendriver import CloudflareSolver, get_chrome_user_agent
-# --- End Solver Integration ---
-
-if sys.platform == "win32":
-    try:
-        # Fix for asyncio on Windows
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    except (RuntimeError, AttributeError):
-        pass
-
-
-def ensure_chrome_installed() -> str:
-    """
-    Ensure Chrome binary is available under ~/.local/chrome using the provided install script.
-    Returns the path to the Chrome binary.
-    """
-    CHROME_DIR = Path.home() / ".local" / "chrome"
-    CHROME_BIN = CHROME_DIR / "chrome"
-    if CHROME_BIN.exists():
-        return str(CHROME_BIN)
-
-    subprocess.run(
-        [sys.executable, "install_chrome.py"],
-        check=True,
-        env=os.environ.copy(),
-    )
-
-    if not CHROME_BIN.exists():
-        raise PlaywrightError("Chrome installation failed; chrome binary not found.")
-
-    return str(CHROME_BIN)
+from chrome_installer import ensure_chrome_installed
 
 
 def _ensure_scheme(value: str) -> str:
