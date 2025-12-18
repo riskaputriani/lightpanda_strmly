@@ -99,54 +99,34 @@ def find_best_proxy():
             continue
     return None
 
-async def get_playwright_browser_path_async() -> str:
+@st.cache_resource
+def get_playwright_browser_path() -> str:
     """
-    Gets the executable path of the Playwright-installed Chromium browser
-    using the async API. Caches the result in session state.
+    Gets the executable path for the Playwright-managed Chromium browser.
+    Ensures browsers are installed first. Caches the result.
     """
-    if st.session_state.browser_path:
+    if st.session_state.get("browser_path"):
         return st.session_state.browser_path
 
     ensure_playwright_browsers_installed()
-    
-    from playwright.async_api import async_playwright
-    async with async_playwright() as p:
-        st.session_state.browser_path = p.chromium.executable_path
-        return st.session_state.browser_path
-
-def sanitize_cookies(cookies: list[dict]) -> list[dict]:
-    """
-    Sanitizes a list of cookie dictionaries to be compatible with Playwright's add_cookies method.
-    It only keeps the keys that Playwright accepts for setting cookies.
-    """
-    sanitized_list = []
-    # Keys that Playwright's context.add_cookies() accepts.
-    valid_keys = {"name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"}
-
-    for original_cookie in cookies:
-        if not isinstance(original_cookie, dict):
-            continue
-            
-        new_cookie = {}
-        for key, value in original_cookie.items():
-            if key in valid_keys:
-                new_cookie[key] = value
-        
-        # Ensure required keys are present before adding
-        if "name" in new_cookie and "value" in new_cookie:
-            # Fix for sameSite, which must be one of the three values if present
-            if "sameSite" in new_cookie and new_cookie.get("sameSite") not in ["Strict", "Lax", "None"]:
-                del new_cookie["sameSite"]
-            sanitized_list.append(new_cookie)
-             
-    return sanitized_list
+    st.info("Getting Playwright browser path...")
+    with sync_playwright() as p:
+        browser_path = p.chromium.executable_path
+        st.session_state.browser_path = browser_path
+        st.info(f"Browser path found: {browser_path}")
+        return browser_path
 
 def run_solver(url: str, proxy: str | None) -> list[dict]:
     """
     Runs the Cloudflare solver as a standalone process and returns the cookies.
     """
+    try:
+        browser_path = get_playwright_browser_path()
+    except Exception as e:
+        st.error(f"Could not determine Playwright browser path: {e}")
+        return []
+
     async def _solve() -> list[dict]:
-        browser_path = await get_playwright_browser_path_async()
         user_agent = get_chrome_user_agent()
         all_cookies: list[dict] = []
         try:
@@ -163,7 +143,6 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
                 clearance_cookie = solver.extract_clearance_cookie(current_cookies)
 
                 if clearance_cookie is None:
-                    # Set the full user agent metadata, just like the CLI version does.
                     await solver.set_user_agent_metadata(await solver.get_user_agent())
                     
                     challenge_platform = await solver.detect_challenge()
@@ -178,25 +157,45 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
                     st.info("Cloudflare clearance cookie already present.")
                     all_cookies = current_cookies
         except Exception as e:
-            # Catching broad exception to handle various solver failures
-            st.error(f"An exception occurred during Cloudflare solving: {e}")
+            st.error(f"An exception occurred during Cloudflare solving: {e}", icon="🔥")
             return []
+
+        if not solver.extract_clearance_cookie(all_cookies):
+             st.warning("Solver finished, but cf_clearance cookie was not found.", icon="⚠️")
+        
         return all_cookies
 
-    # asyncio.run can cause issues in Streamlit's thread, this is a workaround
-    if sys.platform == "win32" and isinstance(
-        asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy
-    ):
-        return asyncio.run(_solve())
-    
-    original_policy = asyncio.get_event_loop_policy()
+    # This logic attempts to run the async solver in Streamlit's environment.
     try:
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        return asyncio.run(_solve())
-    finally:
-        asyncio.set_event_loop_policy(original_policy)
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
 
+    if loop and loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(_solve(), loop)
+        return future.result()
+    else:
+        return asyncio.run(_solve())
+
+
+
+def sanitize_cookies(cookies: list[dict]) -> list[dict]:
+    """
+    Sanitizes the 'sameSite' attribute of cookies to be compatible with Playwright.
+    Playwright's `add_cookies` is strict and only accepts "Strict", "Lax", or "None".
+    """
+    sanitized = []
+    for cookie in cookies:
+        if "sameSite" in cookie:
+            # Convert to title case, as Playwright expects "Strict", "Lax", or "None"
+            val = cookie["sameSite"].title()
+            if val in ("Strict", "Lax", "None"):
+                cookie["sameSite"] = val
+            else:
+                # If the value is invalid, it's safer to remove it
+                del cookie["sameSite"]
+        sanitized.append(cookie)
+    return sanitized
 
 
 def fetch_page(

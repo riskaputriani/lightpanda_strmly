@@ -268,32 +268,37 @@ class CloudflareSolver:
             and await self.detect_challenge() is not None
             and (datetime.now() - start_timestamp).seconds < self._timeout
         ):
-            widget_input = await self.driver.main_tab.find("input")
+            try:
+                widget_input = await self.driver.main_tab.find(
+                    "input", timeout=self._timeout
+                )
 
-            if widget_input.parent is None or not widget_input.parent.shadow_roots:
-                await asyncio.sleep(0.25)
-                continue
-
-            challenge = Element(
-                widget_input.parent.shadow_roots[0],
-                self.driver.main_tab,
-                widget_input.parent.tree,
-            )
-
-            challenge = challenge.children[0]
-
-            if (
-                isinstance(challenge, Element)
-                and "display: none;" not in challenge.attrs["style"]
-            ):
-                await asyncio.sleep(1)
-
-                try:
-                    await challenge.get_position()
-                except Exception:
+                if widget_input.parent is None or not widget_input.parent.shadow_roots:
+                    await asyncio.sleep(1)
                     continue
 
-                await challenge.mouse_click()
+                challenge = Element(
+                    widget_input.parent.shadow_roots[0],
+                    self.driver.main_tab,
+                    widget_input.parent.tree,
+                )
+
+                challenge = challenge.children[0]
+
+                if (
+                    isinstance(challenge, Element)
+                    and "display: none;" not in challenge.attrs["style"]
+                ):
+                    await asyncio.sleep(1)
+
+                    try:
+                        await challenge.get_position()
+                    except Exception:
+                        continue
+
+                    await challenge.mouse_click()
+            except asyncio.TimeoutError:
+                pass
 
 
 async def main() -> None:
