@@ -99,11 +99,22 @@ def find_best_proxy():
             continue
     return None
 
+@st.cache_resource
+def get_playwright_browser_path() -> str:
+    """
+    Gets the executable path of the Playwright-installed Chromium browser.
+    Ensures browsers are installed first.
+    """
+    ensure_playwright_browsers_installed()
+    with sync_playwright() as p:
+        return p.chromium.executable_path
+
 def run_solver(url: str, proxy: str | None) -> list[dict]:
     """
     Runs the Cloudflare solver as a standalone process and returns the cookies.
     """
     async def _solve() -> list[dict]:
+        browser_path = get_playwright_browser_path()
         user_agent = get_chrome_user_agent()
         all_cookies: list[dict] = []
         try:
@@ -112,6 +123,7 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
                 user_agent=user_agent,
                 timeout=45,
                 proxy=proxy,
+                browser_executable_path=browser_path,
             ) as solver:
                 await solver.driver.get(url)
                 
