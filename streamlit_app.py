@@ -155,6 +155,14 @@ def sanitize_cookies(cookies: list[dict]) -> list[dict]:
     """
     sanitized = []
     for cookie in cookies:
+        # Drop unsupported partitionKey structures that may come from upstream sources.
+        if "partitionKey" in cookie:
+            if isinstance(cookie["partitionKey"], str):
+                # Playwright expects a string; keep as-is
+                pass
+            else:
+                cookie.pop("partitionKey")
+
         if "sameSite" in cookie:
             # Convert to title case, as Playwright expects "Strict", "Lax", or "None"
             val = cookie["sameSite"].title()
@@ -163,6 +171,8 @@ def sanitize_cookies(cookies: list[dict]) -> list[dict]:
             else:
                 # If the value is invalid, it's safer to remove it
                 del cookie["sameSite"]
+        if "partitionKey" in cookie and isinstance(cookie["partitionKey"], dict):
+            del cookie["partitionKey"]
         sanitized.append(cookie)
     return sanitized
 
