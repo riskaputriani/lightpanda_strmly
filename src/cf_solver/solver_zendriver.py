@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import random
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, Final, Iterable, List, Optional
@@ -22,6 +24,47 @@ from zendriver.core.element import Element
 COMMAND: Final[str] = (
     '{name}: {binary} --header "Cookie: {cookies}" --header "User-Agent: {user_agent}" {url}'
 )
+
+
+def _iter_playwright_browser_roots() -> List[Path]:
+    """
+    Return likely locations where Playwright stores downloaded browsers.
+    """
+    roots: List[Path] = []
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env_path:
+        roots.append(Path(env_path))
+
+    home = Path.home()
+    roots.extend(
+        [
+            home / ".cache" / "ms-playwright",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright",
+            home / "Library" / "Caches" / "ms-playwright",
+        ]
+    )
+    return [p for p in roots if p]
+
+
+def find_playwright_chromium_executable() -> Optional[str]:
+    """
+    Try to locate a Playwright-managed Chromium executable.
+    """
+    platform_paths = [
+        ("chrome-linux", "chrome"),
+        ("chrome-win", "chrome.exe"),
+        ("chrome-mac", "Chromium.app/Contents/MacOS/Chromium"),
+    ]
+
+    for root in _iter_playwright_browser_roots():
+        if not root.exists():
+            continue
+        for chromium_dir in sorted(root.glob("chromium-*"), reverse=True):
+            for platform_dir, exe_name in platform_paths:
+                candidate = chromium_dir / platform_dir / exe_name
+                if candidate.exists():
+                    return str(candidate)
+    return None
 
 
 def get_chrome_user_agent() -> str:
@@ -103,9 +146,10 @@ class CloudflareSolver:
     async def __aenter__(self) -> CloudflareSolver:
         if self._standalone_mode:
             # Standalone mode: launch new browser
+            browser_path = self.browser_executable_path or find_playwright_chromium_executable()
             config = zendriver.Config(
                 headless=self.headless,
-                browser_executable_path=self.browser_executable_path,
+                browser_executable_path=browser_path,
             )
 
             if self.user_agent is not None:
@@ -362,7 +406,8 @@ async def main() -> None:
         "-bep",
         "--browser-executable-path",
         default=None,
-        help="The path to the browser executable (e.g., /usr/bin/google-chrome)",
+        help="The path to the browser executable (e.g., /usr/bin/google-chrome). "
+             "If omitted, a Playwright-managed Chromium will be used when available.",
         type=str,
     )
 
