@@ -1,9 +1,14 @@
 import json
 import os
+import sys
+from pathlib import Path
 from datetime import datetime
 from typing import List, Optional
 
 import streamlit as st
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 
 from components.cookies import sanitize_cookies
 from components.page_fetcher import fetch_page
