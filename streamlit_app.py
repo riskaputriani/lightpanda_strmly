@@ -26,31 +26,25 @@ if sys.platform == "win32":
     except (RuntimeError, AttributeError):
         pass
 
-CHROME_DIR = Path.home() / ".local" / "chrome"
-CHROME_BIN = CHROME_DIR / "chrome"
-INSTALL_SCRIPT = Path(__file__).parent / "install_chrome.sh"
 
 def ensure_chrome_installed() -> str:
     """
     Ensure Chrome binary is available under ~/.local/chrome using the provided install script.
     Returns the path to the Chrome binary.
     """
+    CHROME_DIR = Path.home() / ".local" / "chrome"
+    CHROME_BIN = CHROME_DIR / "chrome"
     if CHROME_BIN.exists():
         return str(CHROME_BIN)
 
     subprocess.run(
-        ["bash", str(INSTALL_SCRIPT)],
+        [sys.executable, "install_chrome.py"],
         check=True,
         env=os.environ.copy(),
     )
 
     if not CHROME_BIN.exists():
         raise PlaywrightError("Chrome installation failed; chrome binary not found.")
-
-    if CHROME_DEPS_LIB.exists():
-        os.environ["LD_LIBRARY_PATH"] = (
-            f"{CHROME_DEPS_LIB}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"
-        )
 
     return str(CHROME_BIN)
 
