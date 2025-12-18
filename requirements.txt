@@ -4,5 +4,6 @@ latest_user_agents==0.0.5
 selenium_authenticated_proxy==1.1.2
 user_agents==2.2.0
 zendriver==0.15.2
+openai>=1.12.0
 requests>=2.31
 beautifulsoup4>=4.12
