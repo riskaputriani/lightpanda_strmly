@@ -116,13 +116,30 @@ async def get_playwright_browser_path_async() -> str:
 
 def sanitize_cookies(cookies: list[dict]) -> list[dict]:
     """
-    Removes problematic keys from cookie dictionaries to make them
-    compatible with Playwright.
+    Sanitizes a list of cookie dictionaries to be compatible with Playwright's add_cookies method.
+    It only keeps the keys that Playwright accepts for setting cookies.
     """
-    for cookie in cookies:
-        if "partitionKey" in cookie:
-            del cookie["partitionKey"]
-    return cookies
+    sanitized_list = []
+    # Keys that Playwright's context.add_cookies() accepts.
+    valid_keys = {"name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"}
+
+    for original_cookie in cookies:
+        if not isinstance(original_cookie, dict):
+            continue
+            
+        new_cookie = {}
+        for key, value in original_cookie.items():
+            if key in valid_keys:
+                new_cookie[key] = value
+        
+        # Ensure required keys are present before adding
+        if "name" in new_cookie and "value" in new_cookie:
+            # Fix for sameSite, which must be one of the three values if present
+            if "sameSite" in new_cookie and new_cookie.get("sameSite") not in ["Strict", "Lax", "None"]:
+                del new_cookie["sameSite"]
+            sanitized_list.append(new_cookie)
+             
+    return sanitized_list
 
 def run_solver(url: str, proxy: str | None) -> list[dict]:
     """
