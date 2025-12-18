@@ -45,12 +45,11 @@ if st.session_state.proxy_country:
     st.sidebar.info(f"Negara Proxy: {st.session_state.proxy_country}")
 
 st.sidebar.header("Overrides")
-user_agent_input = st.sidebar.text_input("User Agent", value=st.session_state.user_agent)
+user_agent_input = st.sidebar.text_input("User Agent")
 cookie_json_text_input = st.sidebar.text_area(
     "Cookies (JSON Array)", value=st.session_state.cookie_text
 )
 cookie_file = st.sidebar.file_uploader("Upload cookies.json", type=["json"])
-st.session_state.user_agent = user_agent_input
 
 # --- Main Page ---
 url_input = st.text_input("Masukkan URL yang ingin diambil datanya", value="")
@@ -104,35 +103,16 @@ if st.button("Go"):
             )
 
         if use_solver and result.get("status") == "cloudflare_challenge":
-            solver_result = run_solver(normalized_url, final_proxy)
-            solver_cookies = []
-            solver_user_agent = None
-            if isinstance(solver_result, dict):
-                solver_cookies = solver_result.get("cookies") or []
-                solver_user_agent = solver_result.get("user_agent")
-            elif solver_result:
-                solver_cookies = solver_result
-
+            solver_cookies = run_solver(normalized_url, final_proxy)
             if not solver_cookies:
                 st.error("Cloudflare solver gagal mendapatkan cookies.")
                 st.stop()
 
             sanitized_cookies = sanitize_cookies(solver_cookies)
             st.session_state.cookie_text = json.dumps(sanitized_cookies, indent=2)
-            if solver_user_agent:
-                st.session_state.user_agent = solver_user_agent
-
             st.success("Solver berhasil mendapatkan cookies. Mengambil ulang halaman...")
 
-            with st.spinner("Mengambil halaman..."):
-                result = fetch_page(
-                    normalized_url,
-                    take_screenshot=take_screenshot,
-                    get_html=get_html,
-                    proxy=final_proxy,
-                    cookies=sanitized_cookies,
-                    user_agent=solver_user_agent or final_user_agent,
-                )
+            st.rerun()
 
         # --- Display Results ---
         if result.get("status") == "ok":
@@ -165,3 +145,4 @@ if st.button("Go"):
 
         else:
             st.error(f"Gagal mengambil halaman: {result.get('message', 'Unknown error')}")
+

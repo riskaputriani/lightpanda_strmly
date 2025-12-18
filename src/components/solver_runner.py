@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import streamlit as st
 
@@ -8,18 +8,19 @@ from cf_solver.solver_zendriver import CloudflareSolver, get_chrome_user_agent
 from .browser_manager import get_chrome_path
 
 
-def run_solver(url: str, proxy: Optional[str]) -> List[dict]:
+def run_solver(url: str, proxy: Optional[str]) -> Dict[str, object]:
     """
-    Run the Cloudflare solver as a standalone process and return cookies.
+    Run the Cloudflare solver as a standalone process and return cookies plus the user agent.
     """
     try:
         browser_path = get_chrome_path()
     except Exception as err:
         st.error(f"Could not determine Chrome path: {err}")
-        return []
+        return {"cookies": [], "user_agent": None}
 
-    async def _solve() -> List[dict]:
+    async def _solve() -> Dict[str, object]:
         user_agent = get_chrome_user_agent()
+        solver_user_agent: Optional[str] = user_agent
         all_cookies: List[dict] = []
         solver: Optional[CloudflareSolver] = None
 
@@ -55,12 +56,18 @@ def run_solver(url: str, proxy: Optional[str]) -> List[dict]:
                     all_cookies = current_cookies
         except Exception as err:
             st.error(f"An exception occurred during Cloudflare solving: {err}")
-            return []
+            return {"cookies": [], "user_agent": None}
+
+        if solver:
+            try:
+                solver_user_agent = await solver.get_user_agent()
+            except Exception:
+                pass
 
         if solver and not solver.extract_clearance_cookie(all_cookies):
             st.warning("Solver finished, but cf_clearance cookie was not found.")
 
-        return all_cookies
+        return {"cookies": all_cookies, "user_agent": solver_user_agent}
 
     try:
         loop = asyncio.get_running_loop()
@@ -71,4 +78,3 @@ def run_solver(url: str, proxy: Optional[str]) -> List[dict]:
         future = asyncio.run_coroutine_threadsafe(_solve(), loop)
         return future.result()
     return asyncio.run(_solve())
-

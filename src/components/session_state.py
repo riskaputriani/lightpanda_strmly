@@ -6,6 +6,7 @@ DEFAULT_STATE = {
     "proxy_country": "",
     "browser_path": None,
     "cookie_text": "",
+    "user_agent": "",
 }
 
 
@@ -14,4 +15,3 @@ def init_session_state() -> None:
     for key, value in DEFAULT_STATE.items():
         if key not in st.session_state:
             st.session_state[key] = value
-
