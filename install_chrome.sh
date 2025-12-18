@@ -16,7 +16,14 @@ echo "Downloading Google Chrome Stable..."
 curl -L -o chrome-linux.zip \
   https://storage.googleapis.com/chrome-for-testing-public/$(curl -s https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE)/linux64/chrome-linux64.zip
 
-unzip chrome-linux.zip
+# Extract using Python's zipfile (avoids needing system unzip)
+python - <<'PY'
+import zipfile, pathlib
+zip_path = pathlib.Path("chrome-linux.zip")
+with zipfile.ZipFile(zip_path) as zf:
+    zf.extractall(".")
+PY
+
 mv chrome-linux64/* .
 rm -rf chrome-linux64 chrome-linux.zip
 
