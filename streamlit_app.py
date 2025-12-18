@@ -99,22 +99,27 @@ def find_best_proxy():
             continue
     return None
 
-@st.cache_resource
-def get_playwright_browser_path() -> str:
+async def get_playwright_browser_path_async() -> str:
     """
-    Gets the executable path of the Playwright-installed Chromium browser.
-    Ensures browsers are installed first.
+    Gets the executable path of the Playwright-installed Chromium browser
+    using the async API. Caches the result in session state.
     """
+    if st.session_state.browser_path:
+        return st.session_state.browser_path
+
     ensure_playwright_browsers_installed()
-    with sync_playwright() as p:
-        return p.chromium.executable_path
+    
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        st.session_state.browser_path = p.chromium.executable_path
+        return st.session_state.browser_path
 
 def run_solver(url: str, proxy: str | None) -> list[dict]:
     """
     Runs the Cloudflare solver as a standalone process and returns the cookies.
     """
     async def _solve() -> list[dict]:
-        browser_path = get_playwright_browser_path()
+        browser_path = await get_playwright_browser_path_async()
         user_agent = get_chrome_user_agent()
         all_cookies: list[dict] = []
         try:
@@ -230,6 +235,8 @@ if "proxy_address" not in st.session_state:
     st.session_state.proxy_address = ""
 if "proxy_country" not in st.session_state:
     st.session_state.proxy_country = ""
+if "browser_path" not in st.session_state:
+    st.session_state.browser_path = None
 
 st.title("Ambil Data dari URL dengan Playwright")
 st.caption("Tekan tombol 'Go' untuk mengambil data dari URL.")
