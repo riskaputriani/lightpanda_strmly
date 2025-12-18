@@ -45,9 +45,9 @@ def _ensure_scheme(value: str) -> str:
 
 
 def fetch_page(
-    url: str, *, take_screenshot: bool = False, timeout: int = 30_000
+    url: str, *, take_screenshot: bool = False, get_html: bool = False, timeout: int = 30_000
 ) -> dict:
-    """Use Playwright to launch a local Chromium browser, return title and optional screenshot bytes."""
+    """Use Playwright to launch a local Chromium browser, return title and optional screenshot/HTML."""
     ensure_playwright_browsers_installed()
     with sync_playwright() as playwright:
         with playwright.chromium.launch(headless=True) as browser:
@@ -57,6 +57,9 @@ def fetch_page(
 
             if take_screenshot:
                 result["screenshot"] = page.screenshot(full_page=True)
+            
+            if get_html:
+                result["html"] = page.content()
 
             return result
 
@@ -88,12 +91,14 @@ def _system_info_text() -> str:
     return "\n".join(parts)
 
 
-st.set_page_config(page_title="Playwright Title Reader", layout="centered")
-st.title("Ambil Title dari URL dengan Playwright")
-st.caption("Tekan tombol agar Playwright meluncurkan Chromium lokal dan membaca judul.")
+st.set_page_config(page_title="Playwright URL Reader", layout="centered")
+st.title("Ambil Data dari URL dengan Playwright")
+st.caption("Tekan tombol 'Go' untuk mengambil data dari URL.")
 
 st.sidebar.header("Opsi")
-screenshot_button = st.sidebar.button("Ambil screenshot (full page)")
+take_screenshot = st.sidebar.checkbox("Ambil screenshot", value=False)
+get_html = st.sidebar.checkbox("Get HTML", value=False)
+
 
 st.subheader("Playwright Local Browser")
 st.caption(
@@ -108,32 +113,26 @@ st.markdown("---")
 
 url_input = st.text_input("Masukkan URL yang ingin diambil datanya", value="")
 
-if st.button("Dapatkan Title"):
+if st.button("Go"):
     normalized_url = _ensure_scheme(url_input)
     if not normalized_url:
         st.error("Silakan masukkan URL terlebih dahulu.")
     else:
-        with st.spinner("Memuat dan membaca title..."):
+        with st.spinner("Memuat dan memproses halaman..."):
             try:
-                result = fetch_page(normalized_url, take_screenshot=False)
-                st.success("Title ditemukan:")
+                result = fetch_page(
+                    normalized_url, 
+                    take_screenshot=take_screenshot, 
+                    get_html=get_html
+                )
+
+                st.success("Operasi Selesai!")
+                
+                st.subheader("Title")
                 st.code(result.get("title", "-"))
-            except PlaywrightError as exc:
-                st.error(f"Gagal mengambil title: {exc}")
 
-if screenshot_button:
-    normalized_url = _ensure_scheme(url_input)
-    if not normalized_url:
-        st.error("Silakan masukkan URL terlebih dahulu.")
-    else:
-        with st.spinner("Memuat dan mengambil screenshot..."):
-            try:
-                result = fetch_page(normalized_url, take_screenshot=True)
-                st.success("Screenshot berhasil diambil:")
-                st.code(f"URL: {normalized_url}\nTitle: {result.get('title', '-')}")
-
-                if "screenshot" in result:
-                    st.subheader("Screenshot (tidak disimpan ke disk)")
+                if take_screenshot and "screenshot" in result:
+                    st.subheader("Screenshot")
                     st.image(result["screenshot"])
                     st.download_button(
                         "Download screenshot",
@@ -141,5 +140,16 @@ if screenshot_button:
                         file_name="screenshot.png",
                         mime="image/png",
                     )
+
+                if get_html and "html" in result:
+                    st.subheader("HTML Content")
+                    st.code(result["html"], language="html")
+                    st.download_button(
+                        "Download HTML",
+                        data=result["html"],
+                        file_name="page.html",
+                        mime="text/html",
+                    )
+
             except PlaywrightError as exc:
-                st.error(f"Gagal mengambil screenshot: {exc}")
+                st.error(f"Gagal memproses halaman: {exc}")
