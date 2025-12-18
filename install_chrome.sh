@@ -32,7 +32,18 @@ rm -rf chrome-linux64 chrome-linux.zip
 mkdir -p "$DEPS_DIR"
 curl -L -o "$DEPS_DIR/libcairo2.deb" \
   https://deb.debian.org/debian/pool/main/c/cairo/libcairo2_1.16.0-5_amd64.deb
-dpkg-deb -x "$DEPS_DIR/libcairo2.deb" "$DEPS_DIR"
+
+# Pango runtime libs commonly required by Chrome headless
+curl -L -o "$DEPS_DIR/libpango-1.0-0.deb" \
+  https://deb.debian.org/debian/pool/main/p/pango1.0/libpango-1.0-0_1.50.12+ds-1_amd64.deb
+curl -L -o "$DEPS_DIR/libpangocairo-1.0-0.deb" \
+  https://deb.debian.org/debian/pool/main/p/pango1.0/libpangocairo-1.0-0_1.50.12+ds-1_amd64.deb
+curl -L -o "$DEPS_DIR/libpangoft2-1.0-0.deb" \
+  https://deb.debian.org/debian/pool/main/p/pango1.0/libpangoft2-1.0-0_1.50.12+ds-1_amd64.deb
+
+for deb in "$DEPS_DIR"/*.deb; do
+  dpkg-deb -x "$deb" "$DEPS_DIR"
+done
 
 chmod +x chrome
 
