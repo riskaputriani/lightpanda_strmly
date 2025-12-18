@@ -13,6 +13,11 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, Final, Iterable, List, Optional
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+src_path = str(ROOT_DIR / "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 import latest_user_agents
 import user_agents
 import zendriver
@@ -21,9 +26,6 @@ from zendriver import cdp
 from zendriver.cdp.emulation import UserAgentBrandVersion, UserAgentMetadata
 from zendriver.cdp.network import T_JSON_DICT, Cookie
 from zendriver.core.element import Element
-
-import os
-from pathlib import Path
 
 def get_chrome_user_agent() -> str:
     """
@@ -298,7 +300,7 @@ class CloudflareSolver:
                 pass
 
 
-from chrome_installer import ensure_chrome_installed
+from browser.chrome_installer import ensure_chrome_installed
 
 async def solve_cloudflare_challenge(url: str, proxy: str | None = None):
     user_agent = get_chrome_user_agent()

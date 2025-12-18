@@ -1,25 +1,26 @@
 ## Playwright + Chrome/Chromium + Streamlit
 
 A minimal Streamlit UI that uses **Playwright** with **Google Chrome** (if available) or the bundled **Chromium** to:
+
 - Scrape the page **title** of any URL you enter.
 - (Optional) take a full-page **screenshot**.
 - (Optional) download the page **HTML**.
 
 ### Run locally
 
-1) Install Python deps:
+1. Install Python deps:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-2) Install the Playwright-managed Chromium browser (first run only, no sudo):
+2. Install the Playwright-managed Chromium browser (first run only, no sudo):
 
 ```bash
 PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium
 ```
 
-3) Run Streamlit:
+3. Run Streamlit:
 
 ```bash
 streamlit run streamlit_app.py
@@ -32,3 +33,12 @@ streamlit run streamlit_app.py
 - On non-root Linux environments where `apt` is unavailable, the system Chrome install step is skipped; the app falls back to Playwright's bundled Chromium (ensure `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium` has been run).
 - If you cannot install system Chrome, download the Playwright-managed Chromium into a local folder (no sudo) with: `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium`.
 - If Chromium fails to start because of missing system libs (e.g., `libnspr4.so`), the app will try to download and extract those libraries locally into `.pw-libs` (no sudo) and set `LD_LIBRARY_PATH` automatically. This requires outbound HTTP access.
+
+## Jika ini gagal saat scraping pakai user agent
+
+https://www.gartner.com/reviews/markets
+Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+
+## Ref
+
+https://github.com/Xewdy444/CF-Clearance-Scraper?tab=readme-ov-file
