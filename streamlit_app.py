@@ -13,7 +13,6 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
-
 if sys.platform == "win32":
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -49,7 +48,7 @@ def _ensure_scheme(value: str) -> str:
 
 @st.cache_data(ttl=600)
 def get_free_proxies():
-    """Scrape free-proxy-list.net for HTTPS proxies and cache them."""
+    """Scrape free-proxy-list.net for HTTPS proxies and their countries."""
     try:
         url = "https://free-proxy-list.net/"
         response = requests.get(url, timeout=10)
@@ -63,20 +62,34 @@ def get_free_proxies():
             if cols and len(cols) > 6:
                 ip = cols[0].text.strip()
                 port = cols[1].text.strip()
+                country = cols[3].text.strip()
                 is_https = cols[6].text.strip()
                 if is_https == 'yes':
-                    # Playwright needs the scheme for the proxy server
-                    proxies.append(f"http://{ip}:{port}")
+                    proxies.append({
+                        "proxy": f"http://{ip}:{port}",
+                        "country": country
+                    })
         return proxies
     except requests.exceptions.RequestException:
-        return [] # Return empty list on network errors
+        return []
 
-def get_random_proxy():
-    """Get a random proxy from the cached list."""
-    proxies = get_free_proxies()
-    if not proxies:
-        return None
-    return random.choice(proxies)
+def find_best_proxy():
+    """Find a working proxy by testing them sequentially."""
+    proxies_list = get_free_proxies()
+    random.shuffle(proxies_list)
+
+    for proxy_info in proxies_list:
+        proxy = proxy_info["proxy"]
+        try:
+            requests.get(
+                "https://httpbin.org/ip", 
+                proxies={"http": proxy, "https": proxy}, 
+                timeout=3
+            )
+            return proxy_info
+        except requests.exceptions.RequestException:
+            continue
+    return None
 
 
 def fetch_page(
@@ -122,7 +135,6 @@ def fetch_page(
 
 def _system_info_text() -> str:
     """Return a text summary similar to the provided console script."""
-    # ... (function remains unchanged)
     parts = [
         "\n=== SYSTEM INFO ===",
         f"OS          : {platform.system()} {platform.release()}",
@@ -147,8 +159,16 @@ def _system_info_text() -> str:
     ]
     return "\n".join(parts)
 
+# --- App ---
 
 st.set_page_config(page_title="Playwright URL Reader", layout="centered")
+
+# Initialize session state
+if "proxy_address" not in st.session_state:
+    st.session_state.proxy_address = ""
+if "proxy_country" not in st.session_state:
+    st.session_state.proxy_country = ""
+
 st.title("Ambil Data dari URL dengan Playwright")
 st.caption("Tekan tombol 'Go' untuk mengambil data dari URL.")
 
@@ -157,8 +177,22 @@ take_screenshot = st.sidebar.checkbox("Ambil screenshot", value=False)
 get_html = st.sidebar.checkbox("Get HTML", value=False)
 
 st.sidebar.header("Proxy")
-proxy_input = st.sidebar.text_input("Manual Proxy (contoh: http://user:pass@host:port)")
-auto_proxy = st.sidebar.checkbox("Cari proxy otomatis")
+proxy_input = st.sidebar.text_input("Proxy Address", value=st.session_state.proxy_address)
+
+if st.sidebar.button("Cari proxy otomatis"):
+    with st.spinner("Mencari & menguji proxy..."):
+        best_proxy = find_best_proxy()
+        if best_proxy:
+            st.session_state.proxy_address = best_proxy["proxy"]
+            st.session_state.proxy_country = best_proxy["country"]
+            st.rerun()
+        else:
+            st.sidebar.error("Tidak ada proxy yang berfungsi ditemukan.")
+            st.session_state.proxy_address = ""
+            st.session_state.proxy_country = ""
+
+if st.session_state.proxy_country:
+    st.sidebar.info(f"Negara Proxy: {st.session_state.proxy_country}")
 
 
 st.subheader("Playwright Local Browser")
@@ -179,17 +213,7 @@ if st.button("Go"):
     if not normalized_url:
         st.error("Silakan masukkan URL terlebih dahulu.")
     else:
-        final_proxy = None
-        if auto_proxy:
-            with st.spinner("Mencari proxy otomatis..."):
-                proxy = get_random_proxy()
-                if proxy:
-                    st.info(f"Menggunakan proxy otomatis: {proxy}")
-                    final_proxy = proxy
-                else:
-                    st.warning("Gagal menemukan proxy otomatis. Melanjutkan tanpa proxy.")
-        elif proxy_input:
-            final_proxy = proxy_input
+        final_proxy = proxy_input if proxy_input else None
 
         with st.spinner("Memuat dan memproses halaman..."):
             try:
