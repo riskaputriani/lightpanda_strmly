@@ -114,6 +114,16 @@ async def get_playwright_browser_path_async() -> str:
         st.session_state.browser_path = p.chromium.executable_path
         return st.session_state.browser_path
 
+def sanitize_cookies(cookies: list[dict]) -> list[dict]:
+    """
+    Removes problematic keys from cookie dictionaries to make them
+    compatible with Playwright.
+    """
+    for cookie in cookies:
+        if "partitionKey" in cookie:
+            del cookie["partitionKey"]
+    return cookies
+
 def run_solver(url: str, proxy: str | None) -> list[dict]:
     """
     Runs the Cloudflare solver as a standalone process and returns the cookies.
@@ -148,6 +158,7 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
                     st.info("Cloudflare clearance cookie already present.")
                     all_cookies = current_cookies
         except Exception as e:
+            # Catching broad exception to handle various solver failures
             st.error(f"An exception occurred during Cloudflare solving: {e}")
             return []
         return all_cookies
@@ -156,10 +167,8 @@ def run_solver(url: str, proxy: str | None) -> list[dict]:
     if sys.platform == "win32" and isinstance(
         asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy
     ):
-        # Already has the right policy
         return asyncio.run(_solve())
     
-    # Temporarily set policy for the solver run
     original_policy = asyncio.get_event_loop_policy()
     try:
         if sys.platform == "win32":
@@ -199,13 +208,13 @@ def fetch_page(
         with playwright.chromium.launch(headless=True) as browser:
             context = browser.new_context(**context_options)
             if cookies:
-                context.add_cookies(cookies)
+                sanitized_cookies = sanitize_cookies(cookies)
+                context.add_cookies(sanitized_cookies)
             
             page = context.new_page()
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout)
                 
-                # Check for Cloudflare challenge
                 if "Just a moment..." in page.title():
                     return {"status": "cloudflare_challenge"}
 
@@ -220,13 +229,6 @@ def fetch_page(
             except PlaywrightError as e:
                 return {"status": "error", "message": str(e)}
 
-
-def _system_info_text() -> str:
-    """Return a text summary similar to the provided console script."""
-    # ... (omitted for brevity, unchanged)
-    return ""
-
-
 # --- App ---
 st.set_page_config(page_title="Playwright URL Reader", layout="centered")
 
@@ -237,6 +239,8 @@ if "proxy_country" not in st.session_state:
     st.session_state.proxy_country = ""
 if "browser_path" not in st.session_state:
     st.session_state.browser_path = None
+if "cookie_text" not in st.session_state:
+    st.session_state.cookie_text = ""
 
 st.title("Ambil Data dari URL dengan Playwright")
 st.caption("Tekan tombol 'Go' untuk mengambil data dari URL.")
@@ -266,7 +270,7 @@ if st.session_state.proxy_country:
     st.sidebar.info(f"Negara Proxy: {st.session_state.proxy_country}")
 
 st.sidebar.header("Cookies")
-cookie_json_text = st.sidebar.text_area("Paste Cookie JSON")
+cookie_json_text_input = st.sidebar.text_area("Paste Cookie JSON", value=st.session_state.cookie_text)
 cookie_file = st.sidebar.file_uploader("Upload cookies.json", type=["json"])
 
 # --- Main Page ---
@@ -281,17 +285,20 @@ if st.button("Go"):
         
         # Load cookies from UI
         loaded_cookies = None
+        # Give file uploader precedence
         if cookie_file:
             try:
                 loaded_cookies = json.load(cookie_file)
+                st.session_state.cookie_text = json.dumps(loaded_cookies, indent=2)
             except Exception as e:
                 st.error(f"Gagal membaca file cookie: {e}")
                 st.stop()
-        elif cookie_json_text:
+        elif cookie_json_text_input:
             try:
-                loaded_cookies = json.loads(cookie_json_text)
+                loaded_cookies = json.loads(cookie_json_text_input)
+                st.session_state.cookie_text = cookie_json_text_input
             except json.JSONDecodeError:
-                st.error("JSON cookie tidak valid.")
+                st.error("JSON cookie di text area tidak valid.")
                 st.stop()
 
         # --- Main Orchestration Logic ---
@@ -310,16 +317,12 @@ if st.button("Go"):
                 st.error("Cloudflare solver gagal mendapatkan cookies.")
                 st.stop()
             
+            sanitized_cookies = sanitize_cookies(solver_cookies)
+            st.session_state.cookie_text = json.dumps(sanitized_cookies, indent=2)
             st.success("Solver berhasil mendapatkan cookies. Mengambil ulang halaman...")
-            with st.spinner("Mengambil ulang dengan cookies baru..."):
-                # Fetch again with solver cookies
-                result = fetch_page(
-                    normalized_url,
-                    take_screenshot=take_screenshot,
-                    get_html=get_html,
-                    proxy=final_proxy,
-                    cookies=solver_cookies,
-                )
+            
+            # Rerun to update the cookie text area and use the new cookies
+            st.rerun()
 
         # --- Display Results ---
         if result.get("status") == "ok":
@@ -338,7 +341,7 @@ if st.button("Go"):
                 st.download_button("Download HTML", data=result["html"], file_name="page.html", mime="text/html")
         
         elif result.get("status") == "cloudflare_challenge":
-            st.error("Gagal melewati Cloudflare bahkan setelah mencoba solver.")
+            st.error("Gagal melewati Cloudflare. Coba aktifkan solver jika belum aktif.")
         
         else:
             st.error(f"Gagal mengambil halaman: {result.get('message', 'Unknown error')}")
