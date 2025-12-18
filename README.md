@@ -31,3 +31,4 @@ streamlit run streamlit_app.py
 - The app always opens pages headlessly via Playwright and returns the title. Checkboxes let you also fetch a screenshot and/or HTML.
 - On non-root Linux environments where `apt` is unavailable, the system Chrome install step is skipped; the app falls back to Playwright's bundled Chromium (ensure `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium` has been run).
 - If you cannot install system Chrome, download the Playwright-managed Chromium into a local folder (no sudo) with: `PLAYWRIGHT_BROWSERS_PATH=.pw-browsers python -m playwright install chromium`.
+- If Chromium fails to start because of missing system libs (e.g., `libnspr4.so`), the app will try to download and extract those libraries locally into `.pw-libs` (no sudo) and set `LD_LIBRARY_PATH` automatically. This requires outbound HTTP access.

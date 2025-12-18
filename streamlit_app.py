@@ -1,8 +1,10 @@
 import asyncio
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import streamlit as st
@@ -16,6 +18,7 @@ install_google_chrome()
 # Use a local, user-writable cache for Playwright browsers to avoid sudo/apt.
 PLAYWRIGHT_BROWSERS_DIR = Path(".pw-browsers").resolve()
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(PLAYWRIGHT_BROWSERS_DIR))
+LOCAL_LIB_DIR = Path(".pw-libs").resolve()
 
 
 @st.cache_resource
@@ -57,6 +60,46 @@ def _normalize_url(url: str) -> str:
     return f"https://{url}"
 
 
+def _ensure_local_nspr_nss() -> Path | None:
+    """
+    On minimal Linux images, Playwright's Chromium may miss libnspr4/libnss3.
+    Download and extract those libs into a local directory (no sudo) and return the lib path.
+    """
+    if platform.system() != "Linux":
+        return None
+
+    target_lib = LOCAL_LIB_DIR / "usr" / "lib" / "x86_64-linux-gnu"
+    if (target_lib / "libnspr4.so").exists():
+        return target_lib
+
+    LOCAL_LIB_DIR.mkdir(parents=True, exist_ok=True)
+
+    deb_urls = [
+        # Versions compatible with Debian/Ubuntu-like images; adjust if URLs break.
+        "https://deb.debian.org/debian/pool/main/n/nspr/libnspr4_4.35-1_amd64.deb",
+        "https://deb.debian.org/debian/pool/main/n/nss/libnss3_3.101-1_amd64.deb",
+    ]
+
+    for url in deb_urls:
+        deb_path = LOCAL_LIB_DIR / Path(url).name
+        try:
+            if not deb_path.exists():
+                urllib.request.urlretrieve(url, deb_path)
+            subprocess.run(
+                ["dpkg-deb", "-x", str(deb_path), str(LOCAL_LIB_DIR)],
+                check=True,
+                capture_output=True,
+            )
+        except Exception:
+            # If we cannot fetch/extract, leave and rely on higher-level error handling.
+            return None
+
+    if (target_lib / "libnspr4.so").exists():
+        return target_lib
+
+    return None
+
+
 async def scrape_with_playwright(
     url: str, *, take_screenshot: bool, get_html: bool
 ) -> dict:
@@ -73,8 +116,16 @@ async def scrape_with_playwright(
     else:
         ensure_playwright_chromium_installed()
 
+    browser_env = os.environ.copy()
+    extra_lib_path = _ensure_local_nspr_nss()
+    if extra_lib_path:
+        current_ld = browser_env.get("LD_LIBRARY_PATH", "")
+        browser_env["LD_LIBRARY_PATH"] = (
+            f"{extra_lib_path}:{current_ld}" if current_ld else f"{extra_lib_path}"
+        )
+
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(**launch_kwargs)
+        browser = await playwright.chromium.launch(**launch_kwargs, env=browser_env)
         page = await browser.new_page()
 
         try:
