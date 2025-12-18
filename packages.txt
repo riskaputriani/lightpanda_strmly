@@ -7,3 +7,4 @@ libcups2
 libdrm2
 libgbm1
 libasound2
+libxcomposite1
